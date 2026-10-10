@@ -1,0 +1,10 @@
+# 临时产物
+.chrome-profile*/
+tests/visual/out/*.html
+_scene-*.html
+
+# 系统文件
+Defold/
+Thumbs.db
+desktop.ini
+.DS_Store
