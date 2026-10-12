@@ -415,3 +415,32 @@ test('读秒模式在引擎 / 设置项 / 文案 / 时间字段四处都接上�
   assert.ok(/byoyomiMs/.test(app) && /byoyomiPeriods/.test(app), 'app.js 应把读秒参数传给引擎');
   assert.ok(/is-byoyomi/.test(css) && /is-byoyomi/.test(app), '读秒阶段应有独立的显示样式');
 });
+
+/* ================= README 里引用的图片 ================= */
+
+test('README 引用的图片都存在，且 screenshots/ 与截图产物逐字节一致', () => {
+  const shots = ['midgame-portrait.png', 'byoyomi-portrait.png', 'midgame-landscape.png'];
+
+  // 1) README 里每个 <img src> 都必须真实存在，并且不能指向 tests/（发布站点时那个目录不发布）
+  ['README.md', 'README_CN.md'].forEach((name) => {
+    const refs = [];
+    const re = /<img[^>]*src="([^"]+)"/g;
+    let m;
+    while ((m = re.exec(read(name))) !== null) { refs.push(m[1]); }
+    assert.equal(refs.length, 3, name + ' 应有 3 张示意图，实际 ' + refs.length);
+    refs.forEach((rel) => {
+      assert.ok(fs.existsSync(path.join(ROOT, rel)), name + ' 引用的图片不存在：' + rel);
+      assert.ok(!/^tests\//.test(rel),
+        name + ' 不该引用 tests/ 下的路径（发布 GitHub Pages 时那里会破图）：' + rel);
+    });
+  });
+
+  // 2) screenshots/ 是 README 用的那一份，必须与 tests/visual/out/ 的产物一致
+  shots.forEach((f) => {
+    const a = path.join(ROOT, 'screenshots', f);
+    const b = path.join(ROOT, 'tests', 'visual', 'out', f);
+    assert.ok(fs.existsSync(a) && fs.existsSync(b), '缺少截图：' + f);
+    assert.deepEqual(fs.readFileSync(a), fs.readFileSync(b),
+      'screenshots/' + f + ' 与 tests/visual/out/' + f + ' 不一致（跑 npm run shots 会自动同步）');
+  });
+});

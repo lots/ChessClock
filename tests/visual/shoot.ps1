@@ -65,3 +65,14 @@ foreach ($j in $jobs) {
     Write-Output ('FAIL {0}' -f ($j.name + $suffix))
   }
 }
+
+# README 里的三张示意截图另存一份到 screenshots/：两份 README 引用的是那个目录。
+# 在这里自动同步，两处就不会各存一份、更不会变陈旧（测试会核对两边一致）。
+$readmeShots = @('midgame-portrait.png', 'byoyomi-portrait.png', 'midgame-landscape.png')
+$shotsDir = Join-Path $root 'screenshots'
+New-Item -ItemType Directory -Force $shotsDir | Out-Null
+foreach ($n in $readmeShots) {
+  $from = Join-Path $out $n
+  if (Test-Path $from) { Copy-Item $from (Join-Path $shotsDir $n) -Force }
+}
+Write-Output ('screenshots/ synced: {0}/3' -f @($readmeShots | Where-Object { Test-Path (Join-Path $shotsDir $_) }).Count)
