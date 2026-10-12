@@ -1,0 +1,376 @@
+--[[
+  menu.gui_script — 设置界面
+  ==================================================================
+  零第三方依赖：按钮就是 logic/ui.lua 动态创建的两个节点（色块 + 文字），
+  命中判定统一走 ui.pick → gui.pick_node（它自己处理坐标空间与缩放，
+  比自己算矩形可靠；disabled 的节点天然不可点）。
+
+  输入动作名与 input/game.input_binding 一一对应：
+    press（鼠标）/ touch_multi（触摸）→ 指针按下
+    key_a / key_l / key_space / key_f / key_esc → 棋钟界面用（这里不用）
+]]
+
+local ui = require("logic.ui")
+local text = require("logic.text")
+local settings = require("logic.settings")
+local E = require("logic.engine")
+
+local MODES = { "fischer", "delay", "byoyomi", "sudden" }
+
+local PRESETS = {
+  { baseMin = 1,  addSec = 0 },
+  { baseMin = 3,  addSec = 2 },
+  { baseMin = 5,  addSec = 3 },
+  { baseMin = 10, addSec = 5 },
+  { baseMin = 15, addSec = 10 },
+  { baseMin = 60, addSec = 30 },
+}
+
+local MODE_TEXT = {
+  fischer = "m_fischer",
+  delay   = "m_delay",
+  byoyomi = "m_byoyomi",
+  sudden  = "m_sudden",
+}
+
+local PAD = 24
+local GAP = 12
+local ROW_H = 62
+local BTN_H = 64
+local PRESET_H = 54
+
+-- 输入调试开关：打包产物用 --config=chessclock.debug_input=1 打开
+local DEBUG_INPUT = (sys.get_config_int("chessclock.debug_input", 0) == 1)
+
+--- 调试日志（只在这个开关打开时输出）：让自动化测试能确认
+--- 按钮真的被点到了、输入框真的收到了事件
+local function dbg(...)
+  if DEBUG_INPUT then print("DBG menu " .. table.concat({ ... }, " ")) end
+end
+
+local layout, refresh, save   -- 前置声明
+
+-- ===================== 建节点 =====================
+
+local function make_button(self, id, label, box_color, text_color, size)
+  -- 交互交给 wire_buttons 挂的回调，这里只负责「长什么样」（字体、颜色、文字）
+  return ui.make_button(self.buttons, id, label, nil, box_color, text_color, size)
+end
+
+local function build(self)
+  self.nodes.logo = ui.texture("logo", 0, 0, 96, hash("logo"))
+  self.nodes.title = ui.text("title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34,
+    text.t("title"), ui.C.fg)
+  self.nodes.subtitle = ui.text("subtitle", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 16,
+    text.t("subtitle"), ui.C.muted)
+
+  -- 1. 计时模式
+  self.nodes.mode_label = ui.text("mode_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
+    text.t("mode"), ui.C.accent)
+  self.mode_buttons = {}
+  for _, mode in ipairs(MODES) do
+    self.mode_buttons[mode] = make_button(self, "mode_" .. mode, text.t(MODE_TEXT[mode]),
+      ui.C.card2, ui.C.fg, 20)
+  end
+
+  -- 2. 时间
+  self.nodes.time_label = ui.text("time_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
+    text.t("timing"), ui.C.accent)
+
+  local rows = {}
+  local function stepper(id, get, set, step)
+    local row = {
+      id = id,
+      label = ui.text(id .. "_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted),
+      minus = make_button(self, id .. "_minus", "-", ui.C.card2, ui.C.fg, 28),
+      plus = make_button(self, id .. "_plus", "+", ui.C.card2, ui.C.fg, 28),
+      value = ui.text(id .. "_value", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30, "", ui.C.fg),
+      get = get, set = set, step = step,
+    }
+    rows[#rows + 1] = row
+    return row
+  end
+
+  rows.base = stepper("base", function() return self.cfg.baseMin end,
+    function(v) self.cfg.baseMin = v end, 1)
+  rows.add = stepper("add", function() return self.cfg.addSec end,
+    function(v) self.cfg.addSec = v end, 1)
+  rows.seg = stepper("seg", function() return self.cfg.periods end,
+    function(v) self.cfg.periods = v end, 1)
+  self.rows = rows
+
+  -- 预设
+  self.nodes.preset_label = ui.text("preset_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
+    text.t("presets"), ui.C.accent)
+  self.preset_buttons = {}
+  for i, p in ipairs(PRESETS) do
+    self.preset_buttons[i] = make_button(self, "preset_" .. i, p.baseMin .. "+" .. p.addSec,
+      ui.C.card2, ui.C.fg, 21)
+  end
+
+  -- 声音
+  self.nodes.sound_label = ui.text("sound_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
+    text.t("sound"), ui.C.accent)
+  self.sound_button = make_button(self, "sound", "", ui.C.accent, ui.C.bg, 20)
+
+  self.nodes.summary = ui.text("summary", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted)
+  self.start_button = make_button(self, "start", text.t("start"), ui.C.ok, ui.C.bg, 30)
+end
+
+-- ===================== 布局 =====================
+
+local function content_height(self)
+  return 118                                   -- 顶部 logo（96）+ 标题
+    + 32 + 2 * BTN_H + GAP + 20                -- 模式
+    + 32 + 3 * (ROW_H + 10)                    -- 时间步进器
+    + 12
+    + 20
+    + 32 + 2 * PRESET_H + GAP + 20             -- 预设
+    + 56 + 20                                  -- 声音
+    + 40                                       -- 摘要
+    + 24 + 92                                  -- 开始按钮
+end
+
+function layout(self)
+  local w, h = ui.screen()
+  local inner = w - PAD * 2
+  local total = content_height(self)
+  local y = math.max(PAD, (h - total) * 0.5)
+  self.start_rect_top = nil
+
+  local function place_button(b, r)
+    b.rect = r
+    local cx = r.x + r.w * 0.5
+    local cy = h - (r.y_top + r.h * 0.5)
+    gui.set_position(b.box, vmath.vector3(cx, cy, 0))
+    gui.set_size(b.box, vmath.vector3(r.w, r.h, 0))
+    gui.set_position(b.label, vmath.vector3(cx, cy, 0))
+  end
+
+  -- 头部：logo 96×96（与网页版设置页一致），标题/副标题在右侧、相对 logo 垂直居中
+  gui.set_position(self.nodes.logo, vmath.vector3(PAD + 48, h - (y + 48), 0))
+  gui.set_size(self.nodes.logo, vmath.vector3(96, 96, 0))
+  local tx = PAD + 96 + 16
+  ui.place_left(self.nodes.title, tx, h - (y + 32), text.t("title"), 34)
+  ui.place_left(self.nodes.subtitle, tx, h - (y + 64), text.t("subtitle"), 16)
+  y = y + 118
+
+  -- 1. 模式
+  ui.place_left(self.nodes.mode_label, PAD, h - (y + 12), text.t("mode"), 20)
+  y = y + 32
+  local bw = (inner - GAP) * 0.5
+  for i, mode in ipairs(MODES) do
+    local col = (i - 1) % 2
+    local row = math.floor((i - 1) / 2)
+    place_button(self.mode_buttons[mode],
+      ui.rect(PAD + col * (bw + GAP), y + row * (BTN_H + GAP), bw, BTN_H))
+  end
+  y = y + 2 * BTN_H + GAP + 20
+
+  -- 2. 时间
+  ui.place_left(self.nodes.time_label, PAD, h - (y + 12), text.t("timing"), 20)
+  y = y + 32
+  for _, row in ipairs({ self.rows.base, self.rows.add, self.rows.seg }) do
+    local cy = h - (y + ROW_H * 0.5)
+    ui.place_left(row.label, PAD + ROW_H + 12, cy, row.label_str or "", 17)
+    place_button(row.minus, ui.rect(PAD, y, ROW_H, ROW_H))
+    place_button(row.plus, ui.rect(w - PAD - ROW_H, y, ROW_H, ROW_H))
+    gui.set_position(row.value, vmath.vector3(w * 0.5, cy, 0))
+    y = y + ROW_H + 10
+  end
+  y = y + 12
+
+  -- 预设
+  ui.place_left(self.nodes.preset_label, PAD, h - (y + 12), text.t("presets"), 20)
+  y = y + 32
+  local pw = (inner - GAP * 2) / 3
+  for i, b in ipairs(self.preset_buttons) do
+    local col = (i - 1) % 3
+    local row = math.floor((i - 1) / 3)
+    place_button(b, ui.rect(PAD + col * (pw + GAP), y + row * (PRESET_H + GAP), pw, PRESET_H))
+  end
+  y = y + 2 * PRESET_H + GAP + 20
+
+  -- 声音
+  ui.place_left(self.nodes.sound_label, PAD, h - (y + 28), text.t("sound"), 20)
+  place_button(self.sound_button, ui.rect(w - PAD - 130, y, 130, 56))
+  y = y + 56 + 20
+
+  -- 摘要 + 开始
+  gui.set_position(self.nodes.summary, vmath.vector3(w * 0.5, h - (y + 16), 0))
+  y = y + 24
+  place_button(self.start_button, ui.rect(PAD, y, inner, 92))
+
+  --[[ 调试用：把每个可点控件在「窗口像素坐标」里的锚点报出来，
+       自动化测试据此点击（避免测试脚本硬编码坐标——窗口大小/DPI/留边都会变）。
+       gui.local_to_screen 拿到的就是窗口像素、原点在左下角。 ]]
+  if DEBUG_INPUT then
+    local wsw, wsh = window.get_size()
+    print(string.format("DBG window %.0f %.0f", wsw, wsh))
+    local function report(id, node)
+      local sp = gui.get_screen_position(node)
+      print(string.format("DBG pos %s %.1f %.1f", id, sp.x, sp.y))
+    end
+    for _, mode in ipairs(MODES) do report("mode_" .. mode, self.mode_buttons[mode].box) end
+    for i, b in ipairs(self.preset_buttons) do report("preset_" .. i, b.box) end
+    report("sound", self.sound_button.box)
+    report("start", self.start_button.box)
+  end
+end
+
+-- ===================== 刷新显示 =====================
+
+function refresh(self)
+  local is_byoyomi = (self.cfg.mode == "byoyomi")
+
+  for mode, b in pairs(self.mode_buttons) do
+    local on = (self.cfg.mode == mode)
+    gui.set_color(b.box, ui.v4(on and ui.C.accent or b.box_color))
+    gui.set_color(b.label, ui.v4(on and ui.C.bg or b.text_color))
+  end
+
+  local add_key = "add_time"
+  if self.cfg.mode == "delay" then add_key = "delay_time" end
+  if self.cfg.mode == "byoyomi" then add_key = "byoyomi_time" end
+  self.rows.add.label_str = text.t(add_key)
+  gui.set_text(self.rows.add.label, self.rows.add.label_str)
+  self.rows.add.value_str = tostring(self.cfg.addSec) .. " s"
+  gui.set_text(self.rows.add.value, self.rows.add.value_str)
+  local add_on = (self.cfg.mode ~= "sudden")
+  ui.enable_button(self.rows.add.minus, add_on)
+  ui.enable_button(self.rows.add.plus, add_on)
+
+  self.rows.base.label_str = text.t("base_time")
+  gui.set_text(self.rows.base.label, self.rows.base.label_str)
+  self.rows.base.value_str = tostring(self.cfg.baseMin) .. " min"
+  gui.set_text(self.rows.base.value, self.rows.base.value_str)
+
+  self.rows.seg.label_str = text.t("byoyomi_seg")
+  gui.set_text(self.rows.seg.label, self.rows.seg.label_str)
+  self.rows.seg.value_str = "x " .. tostring(self.cfg.periods)
+  gui.set_text(self.rows.seg.value, self.rows.seg.value_str)
+  gui.set_enabled(self.rows.seg.label, is_byoyomi)
+  gui.set_enabled(self.rows.seg.value, is_byoyomi)
+  ui.enable_button(self.rows.seg.minus, is_byoyomi)
+  ui.enable_button(self.rows.seg.plus, is_byoyomi)
+
+  for i, b in ipairs(self.preset_buttons) do
+    local p = PRESETS[i]
+    local on = (p.baseMin == self.cfg.baseMin and p.addSec == self.cfg.addSec)
+    gui.set_color(b.box, ui.v4(on and ui.C.accent or b.box_color))
+    gui.set_color(b.label, ui.v4(on and ui.C.bg or b.text_color))
+  end
+
+  gui.set_text(self.sound_button.label,
+    self.cfg.sound and text.t("sound_on") or text.t("sound_off"))
+  gui.set_color(self.sound_button.box, ui.v4(self.cfg.sound and ui.C.accent or ui.C.card2))
+  gui.set_color(self.sound_button.label, ui.v4(self.cfg.sound and ui.C.bg or ui.C.muted))
+
+  gui.set_text(self.nodes.summary,
+    text.t("summary") .. ": " .. E.describeConfig(settings.toEngineConfig(self.cfg)))
+end
+
+function save(self)
+  msg.post("#main", "save_settings", { config = settings.sanitize(self.cfg) })
+end
+
+-- ===================== 按钮回调 =====================
+
+--- 节点建好之后再挂回调。按钮就是 logic/ui.lua 造出来的那几个节点，
+--- 命中判定统一走 ui.pick（内部是 gui.pick_node），不自己算矩形。
+local function wire_buttons(self)
+  for _, mode in ipairs(MODES) do
+    self.mode_buttons[mode].on_click = function()
+      self.cfg.mode = mode
+      if mode == "byoyomi" and self.cfg.addSec < 1 then self.cfg.addSec = 30 end
+      dbg("mode", mode)
+      refresh(self)
+      save(self)
+    end
+  end
+
+  for _, row in ipairs({ self.rows.base, self.rows.add, self.rows.seg }) do
+    row.minus.on_click = function()
+      row.set(row.get() - row.step)
+      dbg(row.id, tostring(row.get()))
+      refresh(self)
+      save(self)
+    end
+    row.plus.on_click = function()
+      row.set(row.get() + row.step)
+      dbg(row.id, tostring(row.get()))
+      refresh(self)
+      save(self)
+    end
+  end
+
+  for i, b in ipairs(self.preset_buttons) do
+    local p = PRESETS[i]
+    b.on_click = function()
+      self.cfg.baseMin = p.baseMin
+      self.cfg.addSec = p.addSec
+      dbg("preset", p.baseMin .. "+" .. p.addSec)
+      refresh(self)
+      save(self)
+    end
+  end
+
+  self.sound_button.on_click = function()
+    self.cfg.sound = not self.cfg.sound
+    dbg("sound", tostring(self.cfg.sound))
+    refresh(self)
+    save(self)
+  end
+
+  self.start_button.on_click = function()
+    dbg("start", settings.sanitize(self.cfg).mode)
+    msg.post("#main", "start_game", { config = settings.sanitize(self.cfg) })
+  end
+end
+
+-- ===================== Defold 回调 =====================
+
+function init(self)
+  self.buttons = {}
+  self.nodes = {}
+  self.cfg = settings.sanitize(nil)
+  build(self)
+  refresh(self)                     -- 先写文案，layout 才能按文字宽度左对齐
+  layout(self)
+  wire_buttons(self)
+end
+
+function on_message(self, message_id, message, sender)
+  if message_id == hash("settings") then
+    self.cfg = settings.sanitize(message.config)
+    refresh(self)
+    layout(self)
+  elseif message_id == hash("window_resized") then
+    layout(self)
+  end
+end
+
+--[[ 指针按下 → 在按钮列表里找命中的那个（倒序，后建的优先）。
+     ui.pick 内部是 gui.pick_node：它自己换算坐标空间，而且 disabled 的节点
+     不可点 —— 所以「读秒段数」那一行被隐藏时不会误触。
+
+     调试：--config=chessclock.debug_input=1 时把每次按压打进日志，
+     tools/click_test.ps1 正是靠这行判断"这次点击游戏到底收到没有"。 ]]
+function on_input(self, action_id, action)
+  local down, px, py = ui.pointer_down(action_id, action)
+  if not down then return false end
+
+  if DEBUG_INPUT then
+    print(string.format("DBG menu input action=%s pressed=true x=%.1f y=%.1f",
+      tostring(action_id), px, py))
+  end
+
+  for i = #self.buttons, 1, -1 do
+    local b = self.buttons[i]
+    if b.on_click and ui.pick(b, px, py) then
+      b.on_click()
+      return true
+    end
+  end
+  return false
+end

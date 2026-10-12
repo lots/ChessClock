@@ -1,0 +1,542 @@
+--[[
+  clock.gui_script — 棋钟界面（两块面板 + 中间操作条 + 超时结算层）
+  ==================================================================
+  与网页版棋钟页一一对应：
+    · 竖屏上下分屏：上半屏黑方（对面选手）、下半屏白方（近侧选手）
+    · 整块半屏就是按键 —— 拍自己那半边即完成一手
+    · 对坐模式：上半屏的内容整体旋转 180°，对面选手看自己的数字是正的
+    · 时间数字按面板尺寸自适应字号；读秒阶段转紫并显示剩余段数
+    · 超时：停表 + 警报音 + 结算层（REMATCH / MAIN MENU）
+
+  计时全部交给 logic/engine.lua（纯逻辑、有单测），这里只做「取时间 → 画界面」。
+
+  坐标系：本文件的 y 一律是「从屏幕顶部往下量」（见 logic/ui.lua），
+  Defold 的 GUI 坐标是底部原点、y 向上，转换集中在 layout() 与 place() 里。
+]]
+
+local E = require("logic.engine")
+local ui = require("logic.ui")
+local text = require("logic.text")
+local settings = require("logic.settings")
+
+local BAR_H = 96
+local ACCENT_W = 6
+
+-- 输入调试开关：打包产物用 --config=chessclock.debug_input=1 打开
+local DEBUG_INPUT = (sys.get_config_int("chessclock.debug_input", 0) == 1)
+
+-- gui.set_rotation 收的是「四元数」而不是角度（传数字会报 quat expected），
+-- 所以这里直接把 180° 算成四元数，顺便绕开了「角度还是弧度」的坑。
+local ROT_180 = vmath.quat_rotation_z(math.pi)
+local ROT_0 = vmath.quat()
+
+local THEME = {
+  w = {
+    face = ui.C.w_face, ink = ui.C.w_ink, low = ui.C.w_low, crit = ui.C.w_crit, byo = ui.C.w_byo,
+    dim_face = ui.dim(ui.C.w_face, 0.86), dim_ink = ui.dim(ui.C.w_ink, 0.62), tag = "white",
+  },
+  b = {
+    face = ui.C.b_face, ink = ui.C.b_ink, low = ui.C.b_low, crit = ui.C.b_crit, byo = ui.C.b_byo,
+    dim_face = ui.dim(ui.C.b_face, 0.86), dim_ink = ui.dim(ui.C.b_ink, 0.62), tag = "black",
+  },
+}
+
+-- 前置声明：build() 里注册的按钮回调会用到这些函数
+-- （Lua 的 local function 必须先声明后使用；用 function name(self) 赋值给已声明的 local）
+local build, layout, layout_pane_text, render, refresh_pane, update_toggle_button
+local engine_press, toggle_pause, toggle_sound, toggle_facing
+local begin_game, show_overlay, hide_overlay
+
+local function play(self, url)
+  if self.cfg and self.cfg.sound then
+    msg.post(url, "play")
+  end
+end
+
+--- 面板上显示谁：WHITE / BLACK（或中文「白方 / 黑方」）
+local function side_label(side)
+  return text.t(THEME[side].tag)
+end
+
+local function set_color_cached(cache, key, node, color)
+  if cache[key] ~= color then
+    cache[key] = color
+    gui.set_color(node, ui.v4(color))
+  end
+end
+
+-- ===================== 建节点 =====================
+
+local function build(self)
+  self.pane = {}
+  for _, side in ipairs({ "w", "b" }) do
+    local th = THEME[side]
+    local p = {}
+    p.side = side
+    p.theme = th
+    p.bg = ui.box("pane_" .. side, ui.rect(0, 0, 10, 10), th.face)
+    p.accent = ui.box("pane_" .. side .. "_accent", ui.rect(0, 0, 10, ACCENT_W), ui.C.accent)
+    p.name = ui.text("name_" .. side, 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 26, "", th.ink)
+    p.time = ui.text("time_" .. side, 0, 0, ui.FONT_CLOCK, ui.FONT_CLOCK_SIZE, 200, "10:00", th.ink)
+    p.foot = ui.text("foot_" .. side, 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 22, "", th.ink)
+    p.rect = ui.rect(0, 0, 10, 10)
+    p.time_str, p.name_str, p.foot_str = nil, nil, nil
+    p.flip = false
+    self.pane[side] = p
+    gui.set_enabled(p.accent, false)
+  end
+
+  self.bar_bg = ui.box("bar", ui.rect(0, 0, 10, 10), ui.C.strip)
+  self.logo = ui.texture("logo", 0, 0, 48, hash("logo"))
+
+  self.btn_toggle = ui.make_button(self.buttons, "btn_toggle", text.t("btn_start"),
+    function() toggle_pause(self) end, ui.C.ok, ui.C.bg, 24)
+  self.btn_sfx = ui.make_button(self.buttons, "btn_sfx", text.t("btn_sfx"),
+    function() toggle_sound(self) end, ui.C.card2, ui.C.fg, 20)
+  self.btn_flip = ui.make_button(self.buttons, "btn_flip", text.t("btn_flip"),
+    function() toggle_facing(self) end, ui.C.card2, ui.C.fg, 20)
+  self.btn_menu = ui.make_button(self.buttons, "btn_menu", text.t("btn_menu"),
+    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ui.C.fg, 20)
+
+  -- 超时结算层（平时隐藏）
+  self.ov = {}
+  self.ov.dim = ui.box("ov_dim", ui.rect(0, 0, 10, 10), { 0.02, 0.03, 0.05, 0.88 })
+  self.ov.card = ui.box("ov_card", ui.rect(0, 0, 10, 10), ui.C.card)
+  self.ov.title = ui.text("ov_title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34, "", ui.C.fg)
+  self.ov.sub = ui.text("ov_sub", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30, "", ui.C.accent)
+  self.ov.detail = ui.text("ov_detail", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted)
+  self.ov_rematch = ui.make_button(self.buttons, "ov_rematch", text.t("btn_rematch"),
+    function() begin_game(self, self.cfg) end, ui.C.accent, ui.C.bg, 26)
+  self.ov_back = ui.make_button(self.buttons, "ov_back", text.t("btn_back"),
+    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ui.C.fg, 24)
+  self.ov.nodes = { self.ov.dim, self.ov.card, self.ov.title, self.ov.sub, self.ov.detail,
+    self.ov_rematch.box, self.ov_rematch.label, self.ov_back.box, self.ov_back.label }
+  self.overlay_on = false
+end
+
+-- ===================== 布局 =====================
+
+local function place_button(self, b, r)
+  local h = select(2, ui.screen())
+  b.rect = r
+  local cx = r.x + r.w * 0.5
+  local cy = h - (r.y_top + r.h * 0.5)
+  gui.set_position(b.box, vmath.vector3(cx, cy, 0))
+  gui.set_size(b.box, vmath.vector3(r.w, r.h, 0))
+  gui.set_position(b.label, vmath.vector3(cx, cy, 0))
+end
+
+--- 面板内的文字：名字在上、时间居中、步数在下（「观者视角」），
+--- 若这块面板是给对面选手的，则上下镜像 + 整块旋转 180°
+function layout_pane_text(self, side)
+  local p = self.pane[side]
+  local w, h = ui.screen()
+  local r = p.rect
+  local cx = w * 0.5
+  local cy = h - (r.y_top + r.h * 0.5)
+  local size = p.time_size or 100
+  local dy = size * 0.66
+  local name_cy = cy + (p.flip and -dy or dy)
+  local foot_cy = cy + (p.flip and dy or -dy)
+  local rot = p.flip and ROT_180 or ROT_0
+
+  gui.set_position(p.time, vmath.vector3(cx, cy, 0))
+  gui.set_scale(p.time, vmath.vector3(size / ui.FONT_CLOCK_SIZE, size / ui.FONT_CLOCK_SIZE, 1))
+  gui.set_rotation(p.time, rot)
+  gui.set_position(p.name, vmath.vector3(cx, name_cy, 0))
+  gui.set_rotation(p.name, rot)
+  gui.set_position(p.foot, vmath.vector3(cx, foot_cy, 0))
+  gui.set_rotation(p.foot, rot)
+end
+
+function layout(self)
+  local w, h = ui.screen()
+  local pane_h = (h - BAR_H) * 0.5
+
+  -- 上半屏 = 黑方（对面选手）；下半屏 = 白方（近侧选手）
+  self.pane.b.rect = ui.rect(0, 0, w, pane_h)
+  self.bar_rect = ui.rect(0, pane_h, w, BAR_H)
+  self.pane.w.rect = ui.rect(0, pane_h + BAR_H, w, pane_h)
+
+  for _, side in ipairs({ "w", "b" }) do
+    local p = self.pane[side]
+    local r = p.rect
+    local cx = w * 0.5
+    local cy = h - (r.y_top + r.h * 0.5)
+
+    gui.set_position(p.bg, vmath.vector3(cx, cy, 0))
+    gui.set_size(p.bg, vmath.vector3(r.w, r.h, 0))
+
+    -- 走棋方高亮条贴在这块面板的外沿
+    if r.y_top == 0 then
+      p.accent_rect = ui.rect(0, 0, w, ACCENT_W)
+    else
+      p.accent_rect = ui.rect(0, r.y_top + r.h - ACCENT_W, w, ACCENT_W)
+    end
+    local ar = p.accent_rect
+    gui.set_position(p.accent, vmath.vector3(ar.x + ar.w * 0.5, h - (ar.y_top + ar.h * 0.5), 0))
+    gui.set_size(p.accent, vmath.vector3(ar.w, ar.h, 0))
+
+    p.flip = (self.cfg ~= nil and self.cfg.facing == true and r.y_top == 0)
+    p.time_size = ui.fit_text_size(p.time_str or "10:00", r.w, r.h)
+    layout_pane_text(self, side)
+  end
+
+  -- 中间操作条：logo + 四个按钮
+  gui.set_position(self.bar_bg, vmath.vector3(w * 0.5, h - (self.bar_rect.y_top + BAR_H * 0.5), 0))
+  gui.set_size(self.bar_bg, vmath.vector3(w, BAR_H, 0))
+
+  local logo_size = 48   -- 与网页版操作条一致（BAR_H=96，上下各留 24）
+  gui.set_position(self.logo, vmath.vector3(20 + logo_size * 0.5, h - (self.bar_rect.y_top + BAR_H * 0.5), 0))
+  gui.set_size(self.logo, vmath.vector3(logo_size, logo_size, 0))
+
+  local bx = 20 + logo_size + 12
+  local gap = 10
+  local btn_h = 56
+  local bw = (w - bx - 20 - gap * 3) / 4
+  local by = self.bar_rect.y_top + (BAR_H - btn_h) * 0.5
+  local row = { self.btn_toggle, self.btn_sfx, self.btn_flip, self.btn_menu }
+  for i, b in ipairs(row) do
+    place_button(self, b, ui.rect(bx + (i - 1) * (bw + gap), by, bw, btn_h))
+  end
+
+  --[[ 调试用：把可点控件的锚点（窗口像素、原点左下）报出来，供自动化测试定位点击。
+       两个面板各报「外侧半区」的一点：对面那块报上方 75%、近侧那块报下方 75%，
+       这样即使窗口很大也不会点到中间的缝隙。 ]]
+  if DEBUG_INPUT then
+    local wsw, wsh = window.get_size()
+    local _, scene_h = ui.screen()
+    print(string.format("DBG window %.0f %.0f", wsw, wsh))
+    local function report(id, node, dy)
+      local sp = gui.get_screen_position(node)
+      print(string.format("DBG pos %s %.1f %.1f", id, sp.x, sp.y + (dy or 0)))
+    end
+    for _, side in ipairs({ "w", "b" }) do
+      local p = self.pane[side]
+      local r = p.rect
+      -- 面板中心的窗口像素位置，再往外侧偏 1/4 面板高
+      local sp = gui.get_screen_position(p.bg)
+      local off = r.h * 0.25 * (wsh / scene_h)     -- 场景单位 → 窗口像素
+      local sign = (r.y_top == 0) and 1 or -1      -- 上半屏（黑方）往上，下半屏（白方）往下
+      print(string.format("DBG pos pane_%s %.1f %.1f", side, sp.x, sp.y + sign * off))
+    end
+    report("bar_toggle", self.btn_toggle.box, 0)
+  end
+
+  -- 结算层
+  local card_w = math.min(w - 48, 560)
+  local card_h = 420
+  local card_x = (w - card_w) * 0.5
+  local card_y = (h - card_h) * 0.5
+  gui.set_position(self.ov.dim, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.ov.dim, vmath.vector3(w, h, 0))
+  gui.set_position(self.ov.card, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.ov.card, vmath.vector3(card_w, card_h, 0))
+  local ccx = w * 0.5
+  gui.set_position(self.ov.title, vmath.vector3(ccx, h - (card_y + 70), 0))
+  gui.set_position(self.ov.sub, vmath.vector3(ccx, h - (card_y + 130), 0))
+  gui.set_position(self.ov.detail, vmath.vector3(ccx, h - (card_y + 185), 0))
+  place_button(self, self.ov_rematch, ui.rect(card_x + 28, card_y + card_h - 170, card_w - 56, 76))
+  place_button(self, self.ov_back, ui.rect(card_x + 28, card_y + card_h - 82, card_w - 56, 62))
+end
+
+-- ===================== 绘制 =====================
+
+function refresh_pane(self, side, info, active)
+  local p = self.pane[side]
+  local th = p.theme
+  local cache = self.color_cache
+  local st = self.state
+
+  -- 时间数字
+  local str = E.formatTime(info.ms)
+  if p.time_str ~= str then
+    p.time_str = str
+    gui.set_text(p.time, str)
+    local size = ui.fit_text_size(str, p.rect.w, p.rect.h)
+    if math.abs(size - (p.time_size or 0)) > 0.5 then
+      p.time_size = size
+      layout_pane_text(self, side)      -- 字号变了，名字/步数跟着挪
+    end
+  end
+
+  -- 颜色：读秒紫、告急黄、最后 20 秒红（与网页版同一套优先级）
+  local ink = th.ink
+  if st.finished and st.flagged == side then
+    ink = th.crit
+  elseif not st.finished and info.ms <= E.CRITICAL_TIME_MS then
+    ink = th.crit
+  elseif info.phase == "byoyomi" then
+    ink = th.byo
+  elseif info.phase == "main" and info.ms <= E.LOW_TIME_MS then
+    ink = th.low
+  end
+  set_color_cached(cache, side .. "_time", p.time, ink)
+  set_color_cached(cache, side .. "_name", p.name, active and th.ink or th.dim_ink)
+  set_color_cached(cache, side .. "_foot", p.foot,
+    info.phase == "byoyomi" and th.byo or th.dim_ink)
+  set_color_cached(cache, side .. "_bg", p.bg, active and th.face or th.dim_face)
+
+  -- 名字行：白方/黑方 + 状态
+  local name_str = side_label(side)
+  if st.finished then
+    name_str = name_str .. " - " .. (st.flagged == side and text.t("time_up") or text.t("wins"))
+  elseif st.paused then
+    name_str = name_str .. " - " .. text.t("paused")
+  elseif not st.started then
+    name_str = name_str .. " - " .. text.t("ready_tag")
+  elseif active then
+    name_str = name_str .. " - " .. (info.phase == "byoyomi" and text.t("byoyomi") or text.t("running"))
+  else
+    name_str = name_str .. " - " .. (info.phase == "byoyomi" and text.t("byoyomi") or text.t("waiting"))
+  end
+  if p.name_str ~= name_str then
+    p.name_str = name_str
+    gui.set_text(p.name, name_str)
+  end
+
+  -- 步数行：读秒阶段附带剩余段数
+  local foot_str = text.t("move") .. " " .. tostring(st.moves[side])
+  if info.phase == "byoyomi" and not st.finished and st.cfg.byoyomiPeriods > 1 then
+    foot_str = foot_str .. "   " .. tostring(info.periodsLeft) .. "/" ..
+      tostring(st.cfg.byoyomiPeriods) .. " " .. text.t("segments")
+  end
+  if p.foot_str ~= foot_str then
+    p.foot_str = foot_str
+    gui.set_text(p.foot, foot_str)
+  end
+
+  -- 走棋方的高亮条
+  if cache[side .. "_accent"] ~= active then
+    cache[side .. "_accent"] = active
+    gui.set_enabled(p.accent, active)
+  end
+
+  -- 读秒最后 10 秒，每秒一下
+  if active then
+    if info.phase == "byoyomi" and st.running and not st.paused then
+      local sec = math.ceil(info.ms / 1000)
+      if sec >= 1 and sec <= 10 then
+        local key = side .. ":" .. info.windowIndex .. ":" .. sec
+        if self.tick_key ~= key then
+          self.tick_key = key
+          play(self, "#sfx_tick")
+        end
+      end
+    end
+  end
+end
+
+local function update_toggle_button(self)
+  local st = self.state
+  local label, color = text.t("btn_start"), ui.C.ok
+  if st.finished then
+    label, color = text.t("over"), ui.C.card2
+  elseif st.started and not st.paused then
+    label, color = text.t("btn_pause"), ui.C.warn
+  elseif st.paused then
+    label, color = text.t("btn_resume"), ui.C.ok
+  end
+  if self.toggle_label ~= label then
+    self.toggle_label = label
+    gui.set_text(self.btn_toggle.label, label)
+  end
+  set_color_cached(self.color_cache, "toggle_box", self.btn_toggle.box, color)
+  gui.set_text(self.btn_sfx.label, text.t("btn_sfx"))
+  set_color_cached(self.color_cache, "sfx_box", self.btn_sfx.box,
+    self.cfg.sound and ui.C.accent or ui.C.card2)
+  set_color_cached(self.color_cache, "flip_box", self.btn_flip.box,
+    self.cfg.facing and ui.C.accent or ui.C.card2)
+end
+
+function render(self)
+  if not self.state then return end
+  local now = E.now()
+  local flagged = E.checkFlag(self.state, now)
+  local running = self.state.running and not self.state.paused
+
+  for _, side in ipairs({ "w", "b" }) do
+    local info = E.readout(self.state, side, now)
+    refresh_pane(self, side, info, running and self.state.active == side)
+  end
+  update_toggle_button(self)
+
+  if flagged then
+    play(self, "#sfx_alarm")
+    show_overlay(self, flagged)
+  end
+end
+
+-- ===================== 结算层 =====================
+
+function show_overlay(self, loser)
+  local winner = E.other(loser)
+  if DEBUG_INPUT then
+    print("DBG clock flag loser=" .. loser .. " winner=" .. winner)
+  end
+  gui.set_text(self.ov.title, side_label(loser) .. " " .. text.t("time_up"))
+  gui.set_text(self.ov.sub, side_label(winner) .. " " .. text.t("wins"))
+  gui.set_text(self.ov.detail, E.describeConfig(self.state.cfg) .. "  -  " ..
+    tostring(self.state.moves.w + self.state.moves.b) .. " " .. text.t("move"))
+  self.overlay_on = true
+  for _, n in ipairs(self.ov.nodes) do gui.set_enabled(n, true) end
+end
+
+function hide_overlay(self)
+  self.overlay_on = false
+  for _, n in ipairs(self.ov.nodes) do gui.set_enabled(n, false) end
+end
+
+-- ===================== 操作 =====================
+
+function engine_press(self, side)
+  if not self.state or self.state.finished then return end
+  -- 尚未开表：无论按哪一侧，都由白方开始（白先走），且不计步数
+  local target = self.state.started and side or "w"
+  local res = E.press(self.state, target, E.now())
+  if DEBUG_INPUT then
+    print("DBG clock press side=" .. side .. " target=" .. target ..
+      " result=" .. tostring(res.type) .. " moves=" .. tostring(self.state.moves.w + self.state.moves.b))
+  end
+  if res.type == "move" or res.type == "start" then
+    play(self, "#sfx_click")
+  end
+  render(self)
+end
+
+function toggle_pause(self)
+  if not self.state or self.state.finished then return end
+  if not self.state.started then
+    engine_press(self, "w")
+    return
+  end
+  if self.state.paused then
+    E.resume(self.state, E.now())
+  else
+    E.pause(self.state, E.now())
+  end
+  render(self)
+end
+
+function toggle_sound(self)
+  self.cfg.sound = not self.cfg.sound
+  msg.post("#main", "save_settings", { config = self.cfg })
+  update_toggle_button(self)
+  if self.cfg.sound then play(self, "#sfx_click") end
+end
+
+function toggle_facing(self)
+  self.cfg.facing = not self.cfg.facing
+  msg.post("#main", "save_settings", { config = self.cfg })
+  layout(self)
+  render(self)
+end
+
+function begin_game(self, config)
+  self.cfg = settings.sanitize(config)
+  self.state = E.newGame(settings.toEngineConfig(self.cfg))
+  print("clock screen ready - " .. E.describeConfig(self.state.cfg))
+  self.color_cache = {}
+  self.tick_key = nil
+  self.toggle_label = nil
+  for _, side in ipairs({ "w", "b" }) do
+    local p = self.pane[side]
+    p.time_str, p.name_str, p.foot_str = nil, nil, nil
+  end
+  msg.post("#sfx_alarm", "stop")
+  hide_overlay(self)
+  layout(self)
+  render(self)
+end
+
+-- ===================== Defold 回调 =====================
+
+function init(self)
+  self.buttons = {}
+  self.state = nil
+  self.cfg = settings.sanitize(nil)
+  self.color_cache = {}
+  self.overlay_on = false
+  build(self)
+  layout(self)
+  hide_overlay(self)
+end
+
+function on_message(self, message_id, message, sender)
+  if message_id == hash("begin") then
+    begin_game(self, message.config)
+  elseif message_id == hash("window_resized") then
+    layout(self)
+    if self.state then render(self) end
+  end
+end
+
+function update(self, dt)
+  if self.state then render(self) end
+end
+
+function on_input(self, action_id, action)
+  if not self.state then return false end
+
+  -- 键盘（电脑上当棋钟用；键位与 input/game.input_binding 里的 key_* 对应）
+  if action_id == hash("key_a") then
+    if action.pressed then engine_press(self, "w"); return true end
+    return false
+  elseif action_id == hash("key_l") then
+    if action.pressed then engine_press(self, "b"); return true end
+    return false
+  elseif action_id == hash("key_space") then
+    if action.pressed then toggle_pause(self); return true end
+    return false
+  elseif action_id == hash("key_f") then
+    if action.pressed then toggle_facing(self); return true end
+    return false
+  elseif action_id == hash("key_esc") then
+    if action.pressed then msg.post("#main", "back_to_menu"); return true end
+    return false
+  end
+
+  -- 指针（鼠标 / 触摸）
+  local down, px, py = ui.pointer_down(action_id, action)
+  if not down then return false end
+
+  if DEBUG_INPUT then
+    print(string.format(
+      "DBG clock pointer action=%s raw=(%.1f,%.1f) paneB=%s paneW=%s bar=%s btn_toggle=%s",
+      tostring(action_id), px, py,
+      tostring(gui.pick_node(self.pane.b.bg, px, py)),
+      tostring(gui.pick_node(self.pane.w.bg, px, py)),
+      tostring(gui.pick_node(self.bar_bg, px, py)),
+      tostring(ui.pick(self.btn_toggle, px, py))))
+  end
+
+  if self.overlay_on then
+    if ui.pick(self.ov_rematch, px, py) then
+      begin_game(self, self.cfg)
+    elseif ui.pick(self.ov_back, px, py) then
+      msg.post("#main", "back_to_menu")
+    end
+    return true                            -- 结算层挡住整屏
+  end
+
+  if ui.pick(self.btn_toggle, px, py) then
+    toggle_pause(self); return true
+  elseif ui.pick(self.btn_sfx, px, py) then
+    toggle_sound(self); return true
+  elseif ui.pick(self.btn_flip, px, py) then
+    toggle_facing(self); return true
+  elseif ui.pick(self.btn_menu, px, py) then
+    msg.post("#main", "back_to_menu"); return true
+  elseif gui.pick_node(self.bar_bg, px, py) then
+    return true                            -- 点在操作条空白处：什么也不做
+  end
+
+  -- 整块半屏就是按键。直接 pick 面板自己的背景节点，不依赖任何坐标换算，
+  -- 所以窗口尺寸/缩放怎么变都不会错位。
+  if gui.pick_node(self.pane.b.bg, px, py) then
+    engine_press(self, "b")
+  elseif gui.pick_node(self.pane.w.bg, px, py) then
+    engine_press(self, "w")
+  end
+  return true
+end

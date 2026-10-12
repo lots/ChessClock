@@ -4,7 +4,10 @@ tests/visual/out/*.html
 _scene-*.html
 
 # 系统文件
-Defold/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Defold 移植版的源码已入库；它的构建产物（build/ bundle/ .internal/ *.log log.txt）
+# 与编辑器本地状态由 Defold/.gitignore 负责排除。
+

@@ -1,0 +1,21 @@
+script: "/menu/menu.gui_script"
+adjust_reference: ADJUST_REFERENCE_PARENT
+max_nodes: 256
+background_color {
+  x: 0.039
+  y: 0.051
+  z: 0.071
+  w: 1.0
+}
+textures {
+  name: "logo"
+  texture: "/assets/logo.atlas"
+}
+fonts {
+  name: "ui"
+  font: "/assets/fonts/ui.font"
+}
+fonts {
+  name: "clock"
+  font: "/assets/fonts/clock.font"
+}

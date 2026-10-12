@@ -1,0 +1,101 @@
+--[[
+  main.script — 总控（设置界面 ↔ 棋钟界面 的切换与设置持久化）
+  ==================================================================
+  Defold 里每个 script / gui_script 都有独立的 Lua 状态，所以跨界面共享数据
+  用消息而不是共享变量（这也是 Defold 的推荐做法）。
+
+  消息协议：
+    设置界面 → 总控   "start_game"  { config = 设置表 }
+    设置界面 → 总控   "request_settings"
+    棋钟界面 → 总控   "back_to_menu"
+    总控 → 设置界面   "settings"    { config = 设置表 }
+    总控 → 棋钟界面   "begin"       { config = 设置表 }
+    界面本身的开/关用内置的 "enable" / "disable" 消息
+]]
+
+local settings = require("logic.settings")
+local E = require("logic.engine")
+
+function init(self)
+  self.cfg = settings.load()
+  -- 启动日志：出问题时让用户把日志发过来即可（打包版会在 exe 旁写 log.txt）；
+  -- 顺带打印计时源，os.time 只有 1 秒精度，看到它说明 LuaSocket 没加载上。
+  -- 名字从工程配置取，改名不用来这里改（界面里的中文名在 logic/text.lua）。
+  print(sys.get_config_string("project.title", "CoQ Chess Clock") .. " started - mode=" .. self.cfg.mode ..
+    " base=" .. self.cfg.baseMin .. "min add=" .. self.cfg.addSec ..
+    "s - clock=" .. tostring(E.TIME_SOURCE))
+
+  -- 关键：把输入焦点给「整个 game object」。Defold 的 acquire_input_focus 是发给
+  -- 游戏对象的（不是发给某个组件），它会把该对象下所有能接收输入的组件
+  -- （脚本 + 两个 GUI）一起压进输入栈。之前我错发给了 #gui_menu 组件，结果谁都不响应点击。
+  -- 界面切换时不需要反复抢焦点：只要 enable / disable 对应的 GUI，
+  -- 被 disable 的 GUI 不会再收到输入。
+  msg.post("#gui_clock", "disable")
+  msg.post(".", "acquire_input_focus")
+  msg.post("#gui_clock", "disable")
+  msg.post("#gui_menu", "settings", { config = self.cfg })
+
+  -- 调试/展示/冒烟测试用：启动就直接进棋钟界面（跳过设置页）
+  --   打包产物直接跑：CoQ棋钟Defold.exe --config=chessclock.autostart=1
+  if sys.get_config_int("chessclock.autostart", 0) == 1 then
+    msg.post("#main", "start_game", { config = self.cfg })
+  end
+
+  -- 输入调试（--config=chessclock.debug_input=1）：把窗口焦点变化也打进日志，
+  -- 用来区分「点击没送到窗口」和「界面收不到输入」这两种情况。
+  if sys.get_config_int("chessclock.debug_input", 0) == 1 then
+    self.debug_input = true
+    local w, h = window.get_size()
+    print("DBG window size=" .. w .. "x" .. h)
+    window.set_listener(function(_, event)
+      print("DBG window event=" .. tostring(event) ..
+        " (1=gained focus, 2=lost focus, 3=resized, 4=iconified, 5=deiconified)")
+    end)
+    -- 让总控脚本也抢一次输入焦点：如果连它都收不到 action，说明问题在输入绑定/窗口层，
+    -- 而不是 GUI 组件本身。
+    msg.post(".", "acquire_input_focus")
+    print("DBG main script acquired input focus")
+  end
+end
+
+local ACTION_NAMES = {
+  [hash("touch")] = "touch",
+  [hash("touch_multi")] = "touch_multi",
+  [hash("text")] = "text",
+  [hash("key_a")] = "key_a",
+  [hash("key_l")] = "key_l",
+  [hash("key_space")] = "key_space",
+  [hash("key_f")] = "key_f",
+  [hash("key_esc")] = "key_esc",
+}
+
+function on_input(self, action_id, action)
+  if self.debug_input then
+    print("DBG main input action=" .. (ACTION_NAMES[action_id] or tostring(action_id)) ..
+      " x=" .. tostring(action.x) .. " y=" .. tostring(action.y) ..
+      " pressed=" .. tostring(action.pressed) .. " released=" .. tostring(action.released))
+  end
+  return false   -- 不消费，让界面自己去处理
+end
+
+function on_message(self, message_id, message, sender)
+  if message_id == hash("request_settings") then
+    msg.post("#gui_menu", "settings", { config = self.cfg })
+
+  elseif message_id == hash("start_game") then
+    self.cfg = settings.sanitize(message.config)
+    settings.save(self.cfg)
+    msg.post("#gui_menu", "disable")
+    msg.post("#gui_clock", "enable")
+    msg.post("#gui_clock", "begin", { config = self.cfg })
+
+  elseif message_id == hash("back_to_menu") then
+    msg.post("#gui_clock", "disable")
+    msg.post("#gui_menu", "enable")
+    msg.post("#gui_menu", "settings", { config = self.cfg })
+
+  elseif message_id == hash("save_settings") then
+    self.cfg = settings.sanitize(message.config)
+    settings.save(self.cfg)
+  end
+end

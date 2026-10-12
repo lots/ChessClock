@@ -1,0 +1,22 @@
+[project]
+title = CoQ Chess Clock (Defold)
+version = 1.0
+publisher = ChessClock
+developer = ChessClock
+write_log_file = 2
+
+[display]
+width = 720
+height = 1280
+high_dpi = 1
+dynamic_orientation = 0
+
+[bootstrap]
+main_collection = /main/main.collectionc
+render = /builtins/render/default.renderc
+
+[input]
+game_binding = /input/game.input_bindingc
+
+[script]
+shared_state = 1

@@ -1,0 +1,12 @@
+# Defold 构建产物（用 tools/build_and_run.ps1 或编辑器重新生成）
+build/
+bundle/
+.internal/
+*.log
+log.txt
+
+# 编辑器本地状态
+.defold/
+.DS_Store
+Thumbs.db
+desktop.ini
