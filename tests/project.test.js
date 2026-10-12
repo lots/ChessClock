@@ -93,7 +93,7 @@ test('棋钟界面关键节点齐全（白/黑两块面板）', () => {
     assert.ok(html.includes('class="moves" data-side="' + side + '"'), '缺少 ' + side + ' 方步数显示');
     assert.ok(html.includes('class="state-chip" data-side="' + side + '"'), '缺少 ' + side + ' 方状态标记');
   });
-  ['btnToggle', 'btnSound', 'btnRotate', 'btnFull', 'btnSetup', 'btnStartGame', 'btnRematch', 'btnLang'].forEach((id) => {
+  ['btnToggle', 'btnSound', 'btnRotate', 'btnSwap', 'btnFull', 'btnSetup', 'btnStartGame', 'btnRematch', 'btnLang'].forEach((id) => {
     assert.ok(html.includes('id="' + id + '"'), '缺少按钮：#' + id);
   });
 });
@@ -194,12 +194,15 @@ test('页面具备移动端必需的基础设置', () => {
 
 test('对坐模式只旋转竖屏下「对面」那块面板（几何正确性）', () => {
   // 手机平放桌面时，读向正常的是近侧玩家；只有对面那一块的数字需要转 180°。
-  // 竖屏布局是上下分屏，对面 = 上方面板 = .panes 的第一个子元素。
+  // 竖屏布局是上下分屏，对面 = **视觉上排在最前**的那块。注意视觉顺序由 CSS order 决定
+  // （「交换两侧位置」用的就是 order），不再等于 DOM 顺序，所以由 app.js 打 .is-far 来指定。
   assert.ok(css.includes('@media (orientation: portrait)'), '缺少竖屏专用规则');
   assert.ok(
-    css.includes('.facing .pane:first-child .pane-inner { transform: rotate(180deg); }'),
-    '竖屏应旋转上方面板'
+    css.includes('.facing .pane.is-far .pane-inner { transform: rotate(180deg); }'),
+    '竖屏应旋转「视觉上第一块」面板（.facing .pane.is-far）'
   );
+  assert.ok(!/\.pane:first-child/.test(css),
+    '不该再用 .pane:first-child 判断对面那块：交换两侧后 DOM 顺序不再等于视觉顺序');
   // 横屏是左右分屏，两块面板都在同一侧视线上，任何单面板旋转都无法让两人同时读正，
   // 因此横屏不旋转（见 README「摆放方式」）。
   assert.ok(!/rotate\(180deg\)/.test(css.split('@media (orientation: portrait)')[0]), '竖屏规则之外不应出现 180° 旋转');
@@ -208,9 +211,90 @@ test('对坐模式只旋转竖屏下「对面」那块面板（几何正确性�
   const panes = html.slice(html.indexOf('class="panes"'));
   assert.ok(
     panes.indexOf('pane pane-b') < panes.indexOf('pane pane-w'),
-    '黑方面板应排在白方面板之前（竖屏置顶）'
+    '黑方面板应排在白方面板之前（DOM 顺序不变，屏幕上的位置交给 CSS order）'
   );
   assert.ok(!/rotate-black/.test(css + app), '已废弃的 rotate-black 类名不应残留');
+});
+
+test('交换两侧位置（⇵）：order 接线正确，被旋转的始终是视觉上第一块', () => {
+  /* ---------- 1) 两颗按钮：180° 与 ⇵ ---------- */
+  assert.ok(/<button[^>]*id="btnRotate"[^>]*>180°<\/button>/.test(html),
+    '#btnRotate 应显示 180°（而不是旧的 ⇅ 字形）');
+  assert.ok(/<button[^>]*id="btnSwap"[^>]*>⇵<\/button>/.test(html), '#btnSwap 的文字应为 ⇵（U+21F5）');
+  assert.ok(/id="btnSwap"[^>]*data-i18n-title="clock\.swap\.title"/.test(html),
+    '#btnSwap 的标题应走 i18n 词条 clock.swap.title');
+  assert.ok(html.indexOf('id="btnRotate"') < html.indexOf('id="btnSwap"'),
+    '#btnSwap 应紧跟在 #btnRotate 之后（顺序也是工具栏的视觉顺序）');
+  assert.ok(!html.includes('⇅'), 'index.html 里不该再出现旧的 ⇅ 字样');
+  assert.equal(I18N.DICT.zh['clock.swap.title'], '交换两侧位置', '中文词条 clock.swap.title 不对');
+  assert.equal(I18N.DICT.en['clock.swap.title'], 'Swap sides', '英文词条 clock.swap.title 不对');
+
+  /* ---------- 2) 位置交换只靠 CSS order（不动 DOM），操作条恒在中间 ---------- */
+  // order 只有在 flex 容器里才有意义：竖屏是纵向排列（上→下）、横屏是横向（左→右）
+  assert.ok(/\.panes\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/.test(css),
+    '竖屏的两块面板应是纵向 flex 容器（order 才决定上下）');
+  assert.ok(/@media \(orientation: landscape\)[\s\S]*?\.panes\s*\{\s*flex-direction:\s*row/.test(css),
+    '横屏的两块面板应是横向 flex 容器（order 才决定左右）');
+  const orderOf = (sel) => {
+    const re = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{[^}]*?order:\\s*(-?\\d+)');
+    const m = re.exec(css);
+    return m ? Number(m[1]) : null;
+  };
+  // DOM 顺序始终是 黑 → 操作条 → 白：交换只改 order，绝不重排节点
+  const panesDom = html.slice(html.indexOf('class="panes"'));
+  assert.ok(
+    panesDom.indexOf('pane pane-b') < panesDom.indexOf('class="strip"') &&
+    panesDom.indexOf('class="strip"') < panesDom.indexOf('pane pane-w'),
+    'DOM 顺序应保持「黑方面板 → 操作条 → 白方面板」（交换靠 order，不重排节点）'
+  );
+  const orders = (swapped) => ({
+    b: orderOf(swapped ? '#screen-clock.is-swapped .pane-b' : '.pane-b'),
+    w: orderOf(swapped ? '#screen-clock.is-swapped .pane-w' : '.pane-w'),
+    strip: orderOf('.strip')
+  });
+  // 视觉顺序 = order 顺序（竖屏自上而下 / 横屏自左而右都是这个顺序）
+  const visual = (swapped) => {
+    const o = orders(swapped);
+    return ['b', 'w'].filter((s) => o[s] !== null).sort((x, y) => o[x] - o[y]);
+  };
+  assert.deepEqual(visual(false), ['b', 'w'], '默认应「黑方在前」（竖屏在上 / 横屏在左）');
+  assert.deepEqual(visual(true), ['w', 'b'], '交换后应「白方在前」（竖屏在上 / 横屏在左）');
+  [false, true].forEach((swapped) => {
+    const o = orders(swapped);
+    assert.ok(o.strip !== null && o.w !== null && o.b !== null,
+      '两块面板与操作条都必须显式写 order（交换状态：' + swapped + '）');
+    assert.ok((o.strip > o[visual(swapped)[0]]) && (o.strip < o[visual(swapped)[1]]),
+      '操作条必须夹在两块面板之间（交换状态：' + swapped + '）');
+  });
+
+  /* ---------- 3) 对面 = 视觉上第一块：交换后换成另一块被旋转 ---------- */
+  const farExpr = /var farSide = ([^;]+);/.exec(app);
+  assert.ok(farExpr, 'app.js 应显式算出「对面」那一侧（var farSide = …）');
+  const farSideFor = (swapped) => new Function('cfg', 'return ' + farExpr[1])({ swapped: swapped });
+  assert.equal(farSideFor(false), visual(false)[0], '没交换时应旋转视觉上第一块（黑方）');
+  assert.equal(farSideFor(true), visual(true)[0], '交换后应改旋转视觉上第一块（白方）');
+  assert.ok(/classList\.toggle\('is-far', side === farSide\)/.test(app),
+    'app.js 应把 is-far 只打在「对面」那块面板上');
+
+  /* ---------- 4) 状态、持久化与「再来一局后仍保持」 ---------- */
+  assert.ok(/classList\.toggle\('is-swapped', !!cfg\.swapped\)/.test(app),
+    'app.js 应把 is-swapped 打到 #screen-clock 上（CSS 据此改 order）');
+  const defs = /var DEFAULTS = \{([\s\S]*?)\n  \};/.exec(app)[1];
+  assert.ok(/swapped:\s*false/.test(defs), 'DEFAULTS 里应有 swapped: false（默认不交换）');
+  assert.ok(/\$\('#btnSwap'\)\.addEventListener\('click'/.test(app), '#btnSwap 应绑定点击');
+  assert.ok(/cfg\.swapped = !cfg\.swapped;[\s\S]{0,160}?saveSettings\(\);/.test(app),
+    '切换后应立刻 saveSettings()（和别的选项一样存进 localStorage）');
+  assert.ok(/applySwap\(\);/.test(app), '应调用 applySwap() 套用交换状态');
+  const readUI = /function readSetupUI\(\) \{([\s\S]*?)\n  \}/.exec(app);
+  assert.ok(readUI, '找不到 readSetupUI()');
+  assert.ok(!/swapped/.test(readUI[1]),
+    'readSetupUI() 不该覆盖 swapped：每局开始（newGame）都读一遍设置，被打回默认就「活不过再来一局」了');
+  assert.ok(/function newGame\(\) \{[\s\S]*?applySwap\(\);/.test(app),
+    'newGame() 应重新套用交换状态，这样再来一局不会被重置');
+
+  /* ---------- 5) 新按钮沿用 .icon-btn 的既有行为（失焦、i18n 标题） ---------- */
+  assert.ok(/\$\$\('\.icon-btn, \.btn'\)/.test(app), '新按钮应复用 .icon-btn 的统一处理（点击后 blur）');
+  assert.ok(/class="icon-btn" id="btnSwap"/.test(html), '#btnSwap 的类名应是 .icon-btn（否则样式/行为都接不上）');
 });
 
 /* ================= 界面主题 ================= */
