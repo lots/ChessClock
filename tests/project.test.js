@@ -409,7 +409,9 @@ test('开局：没有「开始」按钮，拍对侧那一半让自己的钟开�
   assert.ok(/id="btnToggle"[^>]*hidden/.test(html),
     '#btnToggle 初始应隐藏（未开表时不该出现「开始」按钮）');
   assert.ok(/id="btnToggleLabel" data-i18n="clock\.pause"/.test(html),
-    '按钮文案应为「暂停 / Pause」而不是 Start');
+    '按钮文案应走 clock.pause 词条（不是 Start）');
+  assert.ok(/id="btnToggleLabel" data-i18n="clock\.pause">P<\/span>/.test(html),
+    '没有 JS 时的静态兜底文案应是短标签 P（与 clock.pause 的英文值一致）');
   assert.ok(!/clock\.start/.test(html) && !/clock\.start/.test(app),
     'index.html 与 app.js 都不该再引用 clock.start');
 
@@ -433,6 +435,28 @@ test('开局：没有「开始」按钮，拍对侧那一半让自己的钟开�
   assert.ok(/function startClock\(\) \{ press\("b"\); \}/.test(driver),
     '场景应通过拍黑方面板来开局（白方随即开始计时）');
   assert.ok(!/getElementById\("btnToggle"\)/.test(driver), '场景不该再点 #btnToggle 开局');
+
+  // 6) 可见文案只有一个字，完整含义靠 title / aria-label 说全
+  assert.equal(I18N.DICT.zh['clock.pause'], '停', '中文 clock.pause 应是「停」');
+  assert.equal(I18N.DICT.en['clock.pause'], 'P', '英文 clock.pause 应是 P');
+  assert.equal(I18N.DICT.zh['clock.resume'], '续', '中文 clock.resume 应是「续」');
+  assert.equal(I18N.DICT.en['clock.resume'], 'C', '英文 clock.resume 应是 C');
+
+  // 说全的那些词条：两种语言都得有（key 集合一致性另有专门用例把关）
+  assert.equal(I18N.DICT.zh['clock.pause.title'], '暂停', '中文 clock.pause.title 应是「暂停」');
+  assert.equal(I18N.DICT.en['clock.pause.title'], 'Pause', '英文 clock.pause.title 应是 Pause');
+  assert.equal(I18N.DICT.zh['clock.resume.title'], '继续', '中文 clock.resume.title 应是「继续」');
+  assert.equal(I18N.DICT.en['clock.resume.title'], 'Resume', '英文 clock.resume.title 应是 Resume');
+
+  // app.js 用这些词条设置按钮的 title / aria-label（不许写死文案）
+  const toggleFn = /function updateToggleButton\(\) \{([\s\S]*?)\n  \}/.exec(app);
+  assert.ok(toggleFn, '找不到 app.js 的 updateToggleButton()');
+  assert.ok(/t\('clock\.pause\.title'\)/.test(toggleFn[1]) && /t\('clock\.resume\.title'\)/.test(toggleFn[1]),
+    'updateToggleButton() 应从 clock.pause.title / clock.resume.title 取说全的文案');
+  assert.ok(/btn\.setAttribute\('title', spelled\)/.test(toggleFn[1]),
+    '#btnToggle 应把 title 设成说全的文案（长按/悬停能看到 Pause / Resume）');
+  assert.ok(/btn\.setAttribute\('aria-label', spelled\)/.test(toggleFn[1]),
+    '#btnToggle 应把 aria-label 设成说全的文案（读屏软件念「暂停 / 继续」）');
 });
 
 /* ================= 图标 / logo ================= */
