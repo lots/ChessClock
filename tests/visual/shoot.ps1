@@ -34,6 +34,8 @@ if (-not (Test-Path $chrome)) { throw '未找到 Chrome / Edge' }
 
 $jobs = @(
   @{ name = 'setup';             scene = 'setup';    w = 390; h = 844; budget = 2000 },
+  # 刚进入棋钟页、尚未开局：核对「没有开始按钮」（要拍面板才会开表）
+  @{ name = 'ready';             scene = 'ready';    w = 390; h = 844; budget = 2000 },
   @{ name = 'midgame-portrait';  scene = 'midgame';  w = 390; h = 844; budget = 8000 },
   @{ name = 'byoyomi-portrait';  scene = 'byoyomi';  w = 390; h = 844; budget = 97000 },
   @{ name = 'states-portrait';   scene = 'states';   w = 390; h = 844; budget = 4000 },

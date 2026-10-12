@@ -308,7 +308,7 @@ test('截图场景：每个场景显式设模式，且不会写进用户设置',
     '场景脚本应把 localStorage.setItem 打桩（否则打开 _scene-*.html 会覆盖用户设置）');
 
   // 每个非 setup 场景都要显式选模式：不能依赖默认值，默认值是会变的
-  ['measure', 'midgame', 'byoyomi', 'critical', 'states'].forEach((s) => {
+  ['measure', 'midgame', 'byoyomi', 'critical', 'states', 'ready'].forEach((s) => {
     const re = new RegExp('scene === "' + s + '"[\\s\\S]{0,500}?mode\\("');
     assert.ok(re.test(driver), '场景 ' + s + ' 应显式调用 mode("…")，不要依赖默认模式');
   });
@@ -316,6 +316,39 @@ test('截图场景：每个场景显式设模式，且不会写进用户设置',
   // 读秒场景的读秒部分应与默认档 10+3×20 一致（20 秒 × 3 段），免得看图的人以为默认是别的
   assert.ok(/setNum\("baseMin", 1\); setNum\("incSec", 20\); setNum\("periods", 3\);/.test(driver),
     'byoyomi 场景的读秒应为 20 秒 × 3 段（与默认档的读秒部分一致）');
+});
+
+/* ================= 开局方式：拍面板，没有「开始」按钮 ================= */
+
+test('开局：没有「开始」按钮，拍对侧那一半让自己的钟开始走', () => {
+  // 1) 那颗按钮只剩「暂停 / 继续」，且未开表时是隐藏的
+  assert.ok(/id="btnToggle"[^>]*hidden/.test(html),
+    '#btnToggle 初始应隐藏（未开表时不该出现「开始」按钮）');
+  assert.ok(/id="btnToggleLabel" data-i18n="clock\.pause"/.test(html),
+    '按钮文案应为「暂停 / Pause」而不是 Start');
+  assert.ok(!/clock\.start/.test(html) && !/clock\.start/.test(app),
+    'index.html 与 app.js 都不该再引用 clock.start');
+
+  // 2) 未开表时按某一侧 → 由**对侧**开始计时（拍黑方 → 白方的钟开始走）
+  assert.ok(/E\.start\(S, Date\.now\(\), E\.other\(side\)\)/.test(app),
+    '未开表时应调用 E.start(S, now, E.other(side))');
+  assert.ok(!/var target = S\.started \? side : 'w'/.test(app),
+    '旧的「按任意一侧都由白方开始」逻辑应已移除');
+
+  // 3) 暂停按钮不再兼职开表
+  assert.ok(/if \(!S \|\| S\.finished \|\| !S\.started\) \{ return; \}/.test(app),
+    'togglePause 在未开表时应直接返回，不再借它开表');
+  assert.ok(!/if \(!S\.started\) \{ handlePress\('w'\); return; \}/.test(app),
+    '旧的「暂停兼开表」逻辑应已移除');
+
+  // 4) 按钮的显示逻辑只关心「是否正在进行」
+  assert.ok(/btn\.hidden = !live;/.test(app), '未开表 / 一局结束时该按钮应隐藏');
+
+  // 5) 截图场景也按新方式开局（不能再点 #btnToggle）
+  const driver = read('tests/visual/build.js');
+  assert.ok(/function startClock\(\) \{ press\("b"\); \}/.test(driver),
+    '场景应通过拍黑方面板来开局（白方随即开始计时）');
+  assert.ok(!/getElementById\("btnToggle"\)/.test(driver), '场景不该再点 #btnToggle 开局');
 });
 
 /* ================= 图标 / logo ================= */
