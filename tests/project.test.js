@@ -381,6 +381,51 @@ test('首次打开：英文 + Byoyomi 10+3×20，且围棋预设恰好是那 8 �
   assert.ok(!/id="periodsField"[^>]*hidden/.test(html), 'Byoyomi 是默认模式，段数字段不该默认隐藏');
 });
 
+test('切进 Byoyomi 自动落到默认档 10+3×20（已挑过读秒预设则不动）', () => {
+  // 1) helper 存在
+  const fn = /function seedByoyomiDefault\(\) \{([\s\S]*?)\n  \}/.exec(app);
+  assert.ok(fn, '找不到 app.js 的 seedByoyomiDefault()');
+
+  // 2) 只有「定义 1 处 + 调用 1 处」：启动时恢复存档那条路径不许调用
+  const calls = app.match(/seedByoyomiDefault\(\)/g) || [];
+  assert.equal(calls.length, 2,
+    'seedByoyomiDefault 应只有定义 1 处 + 模式按钮里调用 1 处（恢复存档时不许 seed）');
+
+  // 3) 接线：在模式按钮的 click 里、syncSetupUI() 之前，且只在「真的变成 Byoyomi」时
+  const handler = new RegExp("\\$\\$\\('#modeGroup \\.seg'\\)\\.forEach\\(function \\(b\\) \\{\\n" +
+    "      b\\.addEventListener\\('click', function \\(\\) \\{([\\s\\S]*?)\\n      \\}\\);").exec(app);
+  assert.ok(handler, '找不到模式按钮的 click 处理函数');
+  const h = handler[1];
+  assert.ok(/var prevMode = cfg\.mode;/.test(h), '模式处理函数应先记下 prevMode 再改 cfg.mode');
+  const seedAt = h.indexOf('seedByoyomiDefault()');
+  const syncAt = h.indexOf('syncSetupUI()');
+  assert.ok(seedAt >= 0, '模式处理函数应调用 seedByoyomiDefault()');
+  assert.ok(syncAt > seedAt, 'seed 必须在 syncSetupUI() 之前调用（输入框与预设高亮才会跟着变）');
+  assert.ok(/saveSettings\(\);/.test(h), '模式切换后仍要 saveSettings()');
+
+  // 调用点必须同时判断「模式确实变了」与「目标是 Byoyomi」：
+  // 切走 / 重按当前模式 / 切到 Fischer·Delay·Sudden 都不许播种。
+  const callLine = h.split('\n').filter((l) => l.indexOf('seedByoyomiDefault()') >= 0)[0];
+  assert.ok(/prevMode !== cfg\.mode/.test(callLine) && /E\.MODES\.BYOYOMI/.test(callLine),
+    'seed 的触发条件应是「prevMode !== cfg.mode && 目标是 Byoyomi」，别的模式一律不播种');
+
+  // 4) 播种值就是 DEFAULTS 那组：10 / 20 / 3 / '10+3x20'
+  const body = fn[1];
+  assert.ok(/cfg\.baseMin = 10;/.test(body), '应播种 baseMin = 10');
+  assert.ok(/cfg\.incSec = 20;/.test(body), '应播种 incSec = 20');
+  assert.ok(/cfg\.periods = 3;/.test(body), '应播种 periods = 3');
+  assert.ok(/cfg\.presetId = '10\+3x20';/.test(body), "应播种 presetId = '10+3x20'");
+
+  // 5) 守卫：先查当前值是不是 PRESETS_BYOYOMI 里的某一档，是就不覆盖
+  assert.ok(/PRESETS_BYOYOMI\.forEach/.test(body),
+    '守卫应遍历 PRESETS_BYOYOMI 判断当前 (baseMin, incSec, periods) 是否已是读秒预设');
+  assert.ok(/if \(isPreset\) \{ return/.test(body),
+    '当前值已是读秒预设时应直接返回，不覆盖用户挑的那档');
+  const writeAt = body.indexOf('cfg.baseMin = 10;');
+  const guardAt = body.indexOf('if (isPreset)');
+  assert.ok(guardAt >= 0 && guardAt < writeAt, '守卫必须写在写入之前（先判断后覆盖）');
+});
+
 /* ================= 截图场景（视觉验证台） ================= */
 
 test('截图场景：每个场景显式设模式，且不会写进用户设置', () => {
