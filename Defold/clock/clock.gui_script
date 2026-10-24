@@ -2,9 +2,14 @@
   clock.gui_script — 棋钟界面（两块面板 + 中间操作条 + 超时结算层）
   ==================================================================
   与网页版棋钟页一一对应：
-    · 竖屏上下分屏：上半屏黑方（对面选手）、下半屏白方（近侧选手）
+    · 竖屏上下分屏：默认上半屏黑方（对面选手）、下半屏白方（近侧选手）；
+      按「交换两侧」则上下互换（视觉上第一块永远是「对面」那块）
     · 整块半屏就是按键 —— 拍自己那半边即完成一手
-    · 对坐模式：上半屏的内容整体旋转 180°，对面选手看自己的数字是正的
+    · **没有「开始」按钮**：未开表时拍对侧 → 对方（白先走，所以是白方）的钟开始走，
+      这一下不算步数；此后每次拍自己那侧 = 走完一手，时间交给对方
+    · 对坐模式：视觉上第一块（默认上半屏）的内容整体旋转 180°，
+      对面选手看自己的数字是正的；交换两侧后旋转跟着「第一块」走
+    · 中间操作条：P / C（暂停、继续，未开表时隐藏）· 声音 · 180° · 交换两侧 · 返回设置
     · 时间数字按面板尺寸自适应字号；读秒阶段转紫并显示剩余段数
     · 超时：停表 + 警报音 + 结算层（REMATCH / MAIN MENU）
 
@@ -18,9 +23,15 @@ local E = require("logic.engine")
 local ui = require("logic.ui")
 local text = require("logic.text")
 local settings = require("logic.settings")
+local theme = require("logic.theme")
 
 local BAR_H = 96
 local ACCENT_W = 6
+local ICON_SIZE = 30          -- 操作条图标在 56 高的按钮里显示 30（PNG 是 96，3 倍余量）
+local MAX_SEGS = 20           -- 读秒段数上限（与 settings.lua 里的 clamp 一致）
+local SEG_H = 9.9             -- 段数条：每一段的高度（原本 9，按需求加厚 10%）
+local SEG_GAP = 6             -- 段与段的间距
+local SEG_GAP_BELOW_DIGITS = 12   -- 段数条与数字下沿之间的空隙
 
 -- 输入调试开关：打包产物用 --config=chessclock.debug_input=1 打开
 local DEBUG_INPUT = (sys.get_config_int("chessclock.debug_input", 0) == 1)
@@ -30,32 +41,42 @@ local DEBUG_INPUT = (sys.get_config_int("chessclock.debug_input", 0) == 1)
 local ROT_180 = vmath.quat_rotation_z(math.pi)
 local ROT_0 = vmath.quat()
 
-local THEME = {
-  w = {
-    face = ui.C.w_face, ink = ui.C.w_ink, low = ui.C.w_low, crit = ui.C.w_crit, byo = ui.C.w_byo,
-    dim_face = ui.dim(ui.C.w_face, 0.86), dim_ink = ui.dim(ui.C.w_ink, 0.62), tag = "white",
-  },
-  b = {
-    face = ui.C.b_face, ink = ui.C.b_ink, low = ui.C.b_low, crit = ui.C.b_crit, byo = ui.C.b_byo,
-    dim_face = ui.dim(ui.C.b_face, 0.86), dim_ink = ui.dim(ui.C.b_ink, 0.62), tag = "black",
-  },
-}
+--[[ 两块面板的配色。**每次建界面时现算**（make_themes），因为换主题会整屏重建，
+     而颜色值是建节点时写死的。两面板始终「黑方深、白方浅」（语义配色，不随主题变）。 ]]
+local function make_themes()
+  return {
+    w = {
+      face = ui.C.w_face, ink = ui.C.w_ink, low = ui.C.w_low, crit = ui.C.w_crit, byo = ui.C.w_byo,
+      dim_face = ui.dim(ui.C.w_face, 0.86), dim_ink = ui.dim(ui.C.w_ink, 0.62), tag = "white",
+    },
+    b = {
+      face = ui.C.b_face, ink = ui.C.b_ink, low = ui.C.b_low, crit = ui.C.b_crit, byo = ui.C.b_byo,
+      dim_face = ui.dim(ui.C.b_face, 0.86), dim_ink = ui.dim(ui.C.b_ink, 0.62), tag = "black",
+    },
+  }
+end
+
+local EDGE_W = 3      -- light/medium 主题下面板外沿的描边宽度（dark 主题是透明色，看不出来）
 
 -- 前置声明：build() 里注册的按钮回调会用到这些函数
 -- （Lua 的 local function 必须先声明后使用；用 function name(self) 赋值给已声明的 local）
-local build, layout, layout_pane_text, render, refresh_pane, update_toggle_button
-local engine_press, toggle_pause, toggle_sound, toggle_facing
+local build, layout, layout_pane_text, layout_pane_bar, render, refresh_pane, update_toggle_button
+local engine_press, toggle_pause, toggle_sound, toggle_facing, toggle_swap
 local begin_game, show_overlay, hide_overlay
 
 local function play(self, url)
   if self.cfg and self.cfg.sound then
+    if DEBUG_INPUT then print("DBG clock play " .. url) end
     msg.post(url, "play")
+  elseif DEBUG_INPUT then
+    print("DBG clock play-skipped " .. url .. " (sound=" .. tostring(self.cfg and self.cfg.sound) .. ")")
   end
 end
 
 --- 面板上显示谁：WHITE / BLACK（或中文「白方 / 黑方」）
+--- 注意：不依赖 THEME（那张表随主题重建，标签与颜色无关）
 local function side_label(side)
-  return text.t(THEME[side].tag)
+  return text.t(side == "w" and "white" or "black")
 end
 
 local function set_color_cached(cache, key, node, color)
@@ -68,17 +89,38 @@ end
 -- ===================== 建节点 =====================
 
 local function build(self)
+  ui.bind(self)          -- 之后建的节点都记在这个界面名下（换主题整屏重建时要按界面删）
+  self.theme = ui.theme_name()   -- 记住「这套节点是用哪个主题建的」
+  if DEBUG_INPUT then print("DBG clock build theme=" .. tostring(self.theme)) end
+  self.themes = make_themes()
+  -- 页面底色：铺满全屏、最先建（永远在最底层）。.gui 里的 background_color 只用于兜底。
+  self.backdrop = ui.backdrop("bg", ui.C.clock_bg)
   self.pane = {}
   for _, side in ipairs({ "w", "b" }) do
-    local th = THEME[side]
+    local th = self.themes[side]
     local p = {}
     p.side = side
     p.theme = th
+    -- 描边（浅色/中性主题需要，否则白方面板和浅色底糊在一起）
+    p.edge = ui.box("pane_" .. side .. "_edge", ui.rect(0, 0, 10, 10), ui.C.pane_edge)
     p.bg = ui.box("pane_" .. side, ui.rect(0, 0, 10, 10), th.face)
     p.accent = ui.box("pane_" .. side .. "_accent", ui.rect(0, 0, 10, ACCENT_W), ui.C.accent)
     p.name = ui.text("name_" .. side, 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 26, "", th.ink)
     p.time = ui.text("time_" .. side, 0, 0, ui.FONT_CLOCK, ui.FONT_CLOCK_SIZE, 200, "10:00", th.ink)
     p.foot = ui.text("foot_" .. side, 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 22, "", th.ink)
+    -- 读秒段数条：先按上限建满（20 段），用不到的由 layout 缩成 0 尺寸。
+    -- 注意不要用 gui.set_enabled(false) 来「隐藏」——disabled 的 GUI 节点连渲染都没有。
+    p.byo = {}
+    p.byo_on = {}
+    p.byo_geom = {}
+    for i = 1, MAX_SEGS do
+      p.byo[i] = ui.box("pane_" .. side .. "_byo" .. i, ui.rect(0, 0, 1, 1), th.byo)
+      p.byo_on[i] = nil
+    end
+    -- 正在倒计时那一段上盖一块红色，宽度 = 本窗口已用掉的比例（后建 → 画在段之上）
+    p.byo_used = ui.box("pane_" .. side .. "_byo_used", ui.rect(0, 0, 1, 1), ui.C.danger)
+    gui.set_enabled(p.byo_used, false)
+    p.byo_ratio = nil
     p.rect = ui.rect(0, 0, 10, 10)
     p.time_str, p.name_str, p.foot_str = nil, nil, nil
     p.flip = false
@@ -89,29 +131,55 @@ local function build(self)
   self.bar_bg = ui.box("bar", ui.rect(0, 0, 10, 10), ui.C.strip)
   self.logo = ui.texture("logo", 0, 0, 48, hash("logo"))
 
-  self.btn_toggle = ui.make_button(self.buttons, "btn_toggle", text.t("btn_start"),
-    function() toggle_pause(self) end, ui.C.ok, ui.C.bg, 24)
-  self.btn_sfx = ui.make_button(self.buttons, "btn_sfx", text.t("btn_sfx"),
-    function() toggle_sound(self) end, ui.C.card2, ui.C.fg, 20)
-  self.btn_flip = ui.make_button(self.buttons, "btn_flip", text.t("btn_flip"),
+  --[[ 中间操作条（与网页版 .strip 同序）：
+       P / C 暂停继续 · 声音 · 180° 对坐 · 交换两侧 · 返回设置。
+       后三颗是**图片**按钮：⇵ / ⚙ / 🔊 在 Defold 内置字体里没有字形（实测 cmap
+       缺失），写成文字会是空白方块，所以用 assets/icons 里的白色 PNG。 ]]
+  self.btn_toggle = ui.make_button(self.buttons, "btn_toggle", text.t("btn_pause"),
+    function() toggle_pause(self) end, ui.C.card2, ui.C.fg, 24)
+  self.btn_sfx = ui.make_icon_button(self.buttons, "btn_sfx",
+    { ui.ICONS.sound_on, ui.ICONS.sound_off },
+    function() toggle_sound(self) end, ui.C.card2, ICON_SIZE)
+  self.btn_facing = ui.make_button(self.buttons, "btn_facing", text.t("btn_facing"),
     function() toggle_facing(self) end, ui.C.card2, ui.C.fg, 20)
-  self.btn_menu = ui.make_button(self.buttons, "btn_menu", text.t("btn_menu"),
-    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ui.C.fg, 20)
+  self.btn_swap = ui.make_icon_button(self.buttons, "btn_swap",
+    { ui.ICONS.swap },
+    function() toggle_swap(self) end, ui.C.card2, ICON_SIZE)
+  self.btn_menu = ui.make_icon_button(self.buttons, "btn_menu",
+    { ui.ICONS.settings },
+    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ICON_SIZE)
+
+  -- 未开表时「暂停 / 继续」整颗隐藏（render 里的 update_toggle_button 按状态再决定）
+  gui.set_enabled(self.btn_toggle.box, false)
+  gui.set_enabled(self.btn_toggle.label, false)
+  self.toggle_live = false
 
   -- 超时结算层（平时隐藏）
   self.ov = {}
-  self.ov.dim = ui.box("ov_dim", ui.rect(0, 0, 10, 10), { 0.02, 0.03, 0.05, 0.88 })
+  self.ov.dim = ui.box("ov_dim", ui.rect(0, 0, 10, 10), ui.dim(ui.C.clock_bg, 0.55))
   self.ov.card = ui.box("ov_card", ui.rect(0, 0, 10, 10), ui.C.card)
   self.ov.title = ui.text("ov_title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34, "", ui.C.fg)
   self.ov.sub = ui.text("ov_sub", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30, "", ui.C.accent)
   self.ov.detail = ui.text("ov_detail", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted)
   self.ov_rematch = ui.make_button(self.buttons, "ov_rematch", text.t("btn_rematch"),
-    function() begin_game(self, self.cfg) end, ui.C.accent, ui.C.bg, 26)
+    function() begin_game(self, self.cfg) end, ui.C.accent, ui.C.accent_ink, 26)
   self.ov_back = ui.make_button(self.buttons, "ov_back", text.t("btn_back"),
     function() msg.post("#main", "back_to_menu") end, ui.C.card2, ui.C.fg, 24)
   self.ov.nodes = { self.ov.dim, self.ov.card, self.ov.title, self.ov.sub, self.ov.detail,
     self.ov_rematch.box, self.ov_rematch.label, self.ov_back.box, self.ov_back.label }
   self.overlay_on = false
+end
+
+--[[ 切到目标主题（共享的 ui.C 会被改成它），返回「这个界面是否需要重建」。
+
+     为什么要按界面记 self.theme：ui.C 是所有脚本共享的一张表，
+     另一个界面可能已经把调色板换掉了；但**节点颜色是建的时候写死的**，
+     所以「全局主题变没变」不能代表「这个界面的节点是不是新主题」。 ]]
+local function use_theme(self, name)
+  local want = theme.normalize(name)
+  local need = (self.theme ~= want)
+  ui.set_theme(want)
+  return need
 end
 
 -- ===================== 布局 =====================
@@ -123,7 +191,14 @@ local function place_button(self, b, r)
   local cy = h - (r.y_top + r.h * 0.5)
   gui.set_position(b.box, vmath.vector3(cx, cy, 0))
   gui.set_size(b.box, vmath.vector3(r.w, r.h, 0))
-  gui.set_position(b.label, vmath.vector3(cx, cy, 0))
+  if b.label then gui.set_position(b.label, vmath.vector3(cx, cy, 0)) end
+  -- 图标按钮：所有候选图标都摆在同一处，靠 enabled 决定显示哪一张
+  if b.icon_nodes then
+    for _, n in ipairs(b.icon_nodes) do
+      gui.set_position(n, vmath.vector3(cx, cy, 0))
+      gui.set_size(n, vmath.vector3(b.icon_size, b.icon_size, 0))
+    end
+  end
 end
 
 --- 面板内的文字：名字在上、时间居中、步数在下（「观者视角」），
@@ -149,14 +224,72 @@ function layout_pane_text(self, side)
   gui.set_rotation(p.foot, rot)
 end
 
+--[[ 读秒段数条：夹在「数字」与「MOVE 那一行」之间，宽度取面板宽的 72%、最多 240。
+
+     数字那一行以面板中心 cy 为中点、高约 time_size，所以段数条放在
+     「数字下沿再往下 SEG_GAP_BELOW_DIGITS + 半段高」的位置 —— 正好在数字与步数行之间。
+
+     对坐模式下这块面板的内容整体转了 180°，段数条也一样要「跟着转」：
+     y 直接按翻转方向算（跑到数字上面去），x 再绕面板中心做一次镜像（段序反过来），
+     效果与「整条跟着面板一起转」完全一致。 ]]
+function layout_pane_bar(self, side)
+  local p = self.pane[side]
+  local r = p.rect
+  local w, h = ui.screen()
+  local total = (self.cfg ~= nil and self.cfg.byoyomiPeriods) or 3
+  -- 读秒 0 秒 = 没有读秒，段数条也就没有意义
+  local shown = (self.cfg ~= nil and self.cfg.mode == "byoyomi"
+    and (self.cfg.addSec or 0) > 0)
+  local bar_w = math.min(r.w * 0.72, 240)
+  local seg_w = (bar_w - SEG_GAP * (total - 1)) / total
+  local pcx = w * 0.5
+  local cy = h - (r.y_top + r.h * 0.5)
+  local size = p.time_size or 100
+  local below = size * 0.5 + SEG_GAP_BELOW_DIGITS + SEG_H * 0.5
+  local bar_cy = p.flip and (cy + below) or (cy - below)
+  for i, node in ipairs(p.byo) do
+    if shown and i <= total and seg_w > 0.5 then
+      local x = r.x + (r.w - bar_w) * 0.5 + (i - 1) * (seg_w + SEG_GAP)
+      local px = x + seg_w * 0.5
+      local py = bar_cy
+      if p.flip then
+        px = 2 * pcx - px
+      end
+      gui.set_position(node, vmath.vector3(px, py, 0))
+      gui.set_size(node, vmath.vector3(seg_w, SEG_H, 0))
+      p.byo_geom[i] = { cx = px, cy = py, w = seg_w, h = SEG_H }
+    else
+      gui.set_size(node, vmath.vector3(0, 0, 0))
+      p.byo_geom[i] = nil
+    end
+  end
+  -- 段重新排过，覆盖块的位置要等下一帧 refresh_pane 重算
+  p.byo_ratio = nil
+end
+
+--- 「交换两侧」只改两块面板在屏幕上的上下位置，不动别的逻辑。
+--- 默认（swapped = false）上半屏是黑方、下半屏是白方；交换后反过来。
+--- 视觉上第一块（上半屏）永远是「对面那块」，对坐旋转跟着它走。
+local function top_side(self)
+  if self.cfg ~= nil and self.cfg.swapped == true then return "w" end
+  return "b"
+end
+
 function layout(self)
   local w, h = ui.screen()
   local pane_h = (h - BAR_H) * 0.5
 
-  -- 上半屏 = 黑方（对面选手）；下半屏 = 白方（近侧选手）
-  self.pane.b.rect = ui.rect(0, 0, w, pane_h)
+  local top = top_side(self)
+  local bottom = (top == "w") and "b" or "w"
+  self.top_side = top
+  self.bottom_side = bottom
+  self.pane[top].rect = ui.rect(0, 0, w, pane_h)
   self.bar_rect = ui.rect(0, pane_h, w, BAR_H)
-  self.pane.w.rect = ui.rect(0, pane_h + BAR_H, w, pane_h)
+  self.pane[bottom].rect = ui.rect(0, pane_h + BAR_H, w, pane_h)
+
+  -- 页面底色铺满整屏
+  gui.set_position(self.backdrop, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.backdrop, vmath.vector3(w, h, 0))
 
   for _, side in ipairs({ "w", "b" }) do
     local p = self.pane[side]
@@ -164,6 +297,9 @@ function layout(self)
     local cx = w * 0.5
     local cy = h - (r.y_top + r.h * 0.5)
 
+    -- 描边：比面板大一圈、垫在下面
+    gui.set_position(p.edge, vmath.vector3(cx, cy, 0))
+    gui.set_size(p.edge, vmath.vector3(r.w + EDGE_W * 2, r.h + EDGE_W * 2, 0))
     gui.set_position(p.bg, vmath.vector3(cx, cy, 0))
     gui.set_size(p.bg, vmath.vector3(r.w, r.h, 0))
 
@@ -177,12 +313,14 @@ function layout(self)
     gui.set_position(p.accent, vmath.vector3(ar.x + ar.w * 0.5, h - (ar.y_top + ar.h * 0.5), 0))
     gui.set_size(p.accent, vmath.vector3(ar.w, ar.h, 0))
 
-    p.flip = (self.cfg ~= nil and self.cfg.facing == true and r.y_top == 0)
+    -- 对坐模式旋转的是「视觉上第一块」（上半屏），与它属于哪一方无关
+    p.flip = (self.cfg ~= nil and self.cfg.facing == true and side == top)
     p.time_size = ui.fit_text_size(p.time_str or "10:00", r.w, r.h)
     layout_pane_text(self, side)
+    layout_pane_bar(self, side)
   end
 
-  -- 中间操作条：logo + 四个按钮
+  -- 中间操作条：logo + 五颗按钮（P/C · 声音 · 180° · 交换两侧 · 返回设置）
   gui.set_position(self.bar_bg, vmath.vector3(w * 0.5, h - (self.bar_rect.y_top + BAR_H * 0.5), 0))
   gui.set_size(self.bar_bg, vmath.vector3(w, BAR_H, 0))
 
@@ -193,9 +331,17 @@ function layout(self)
   local bx = 20 + logo_size + 12
   local gap = 10
   local btn_h = 56
-  local bw = (w - bx - 20 - gap * 3) / 4
+  -- 暂停/继续未开表时不占位（与网页版 #btnToggle 的 hidden 一样：其余按钮顺次左移）
+  local row = {}
+  if self.state and self.state.started and not self.state.finished then
+    row[#row + 1] = self.btn_toggle
+  end
+  row[#row + 1] = self.btn_sfx
+  row[#row + 1] = self.btn_facing
+  row[#row + 1] = self.btn_swap
+  row[#row + 1] = self.btn_menu
+  local bw = (w - bx - 20 - gap * (#row - 1)) / #row
   local by = self.bar_rect.y_top + (BAR_H - btn_h) * 0.5
-  local row = { self.btn_toggle, self.btn_sfx, self.btn_flip, self.btn_menu }
   for i, b in ipairs(row) do
     place_button(self, b, ui.rect(bx + (i - 1) * (bw + gap), by, bw, btn_h))
   end
@@ -220,7 +366,10 @@ function layout(self)
       local sign = (r.y_top == 0) and 1 or -1      -- 上半屏（黑方）往上，下半屏（白方）往下
       print(string.format("DBG pos pane_%s %.1f %.1f", side, sp.x, sp.y + sign * off))
     end
-    report("bar_toggle", self.btn_toggle.box, 0)
+    if self.state and self.state.started and not self.state.finished then
+      report("bar_toggle", self.btn_toggle.box, 0)
+    end
+    report("bar_swap", self.btn_swap.box, 0)
   end
 
   -- 结算层
@@ -306,18 +455,72 @@ function refresh_pane(self, side, info, active)
     gui.set_text(p.foot, foot_str)
   end
 
+  -- 读秒段数条：亮 = 还剩几段，暗 = 已经用掉几段（非读秒模式整条由 layout 收起）
+  if st.cfg.mode == "byoyomi" then
+    local total = st.cfg.byoyomiPeriods
+    local left = info.periodsLeft or total
+    for i = 1, total do
+      local node = p.byo[i]
+      if node then
+        -- 绿 = 还剩几段，红 = 已经用掉（与网页 .byo-bar 的 --ok / --danger 一致）
+        local on = (i <= left)
+        if p.byo_on[i] ~= on then
+          p.byo_on[i] = on
+          gui.set_color(node, ui.v4(on and ui.C.ok or ui.C.danger))
+        end
+      end
+    end
+
+    --[[ 正在倒计时的那一段是「进度条」：本窗口用掉多少，就从红到绿切多少。
+         20 秒的窗口剩 5 秒 → 这一段 25% 绿 + 75% 红（红贴着右边那些已用掉的段）。
+         做法是在这一段上盖一块红色（p.byo_used），宽度 = 已用掉的比例。 ]]
+    local left_n = info.periodsLeft or 0
+    local byo_ms = st.cfg.byoyomiMs or 0
+    if st.cfg.mode == "byoyomi" and left_n > 0
+      and info.phase == "byoyomi" and byo_ms > 0 then
+      local g = p.byo_geom[left_n]
+      local ratio = info.ms / byo_ms
+      if ratio < 0 then ratio = 0 elseif ratio > 1 then ratio = 1 end
+      if g then
+        local used_w = g.w * (1 - ratio)
+        -- 对坐时整条被镜像过：红色要贴在「已用掉」那侧，也就是屏幕上相反的方向
+        local dir = p.flip and -1 or 1
+        local used_cx = g.cx + dir * (g.w * 0.5 - used_w * 0.5)
+        if used_w > 0.5 then
+          gui.set_enabled(p.byo_used, true)
+          gui.set_position(p.byo_used, vmath.vector3(used_cx, g.cy, 0))
+          gui.set_size(p.byo_used, vmath.vector3(used_w, g.h, 0))
+        else
+          gui.set_enabled(p.byo_used, false)
+        end
+        p.byo_ratio = ratio
+      else
+        gui.set_enabled(p.byo_used, false)
+      end
+    else
+      gui.set_enabled(p.byo_used, false)
+      p.byo_ratio = nil
+    end
+  end
+
   -- 走棋方的高亮条
   if cache[side .. "_accent"] ~= active then
     cache[side .. "_accent"] = active
     gui.set_enabled(p.accent, active)
   end
 
-  -- 读秒最后 10 秒，每秒一下
-  if active then
-    if info.phase == "byoyomi" and st.running and not st.paused then
-      local sec = math.ceil(info.ms / 1000)
+  --[[ 最后 10 秒每秒「滴」一声。
+       不只是读秒阶段：**主时间（base time）的最后 10 秒同样要滴**，四种模式都适用 ——
+       那正是「这块表马上要没时间了」的听觉提示。
+       key 里带上「第几手」（双方步数之和）：Fischer 加秒后剩余时间可能又回到 10 秒以上，
+       下一手再次进入最后 10 秒时必须能重新滴满；读秒窗口用 windowIndex 区分。 ]]
+  if active and st.running and not st.paused then
+    local ms = info.ms
+    if ms > 0 and ms <= 10000 then
+      local sec = math.ceil(ms / 1000)
       if sec >= 1 and sec <= 10 then
-        local key = side .. ":" .. info.windowIndex .. ":" .. sec
+        local turn = st.moves.w + st.moves.b
+        local key = string.format("%s:%d:%s:%d:%d", side, turn, info.phase, info.windowIndex, sec)
         if self.tick_key ~= key then
           self.tick_key = key
           play(self, "#sfx_tick")
@@ -327,26 +530,45 @@ function refresh_pane(self, side, info, active)
   end
 end
 
+--[[ 中间那颗按钮只有「暂停 / 继续」两种状态（与网页版 #btnToggle 一致）：
+     开局靠拍对侧面板，所以**未开表时整颗隐藏**，一局结束（结算层已出来）时也隐藏；
+     可见文案只写一个字 —— P（进行中）/ C（已暂停）。 ]]
 local function update_toggle_button(self)
   local st = self.state
-  local label, color = text.t("btn_start"), ui.C.ok
-  if st.finished then
-    label, color = text.t("over"), ui.C.card2
-  elseif st.started and not st.paused then
-    label, color = text.t("btn_pause"), ui.C.warn
-  elseif st.paused then
-    label, color = text.t("btn_resume"), ui.C.ok
+  local live = (st.started and not st.finished)
+  if self.toggle_live ~= live then
+    self.toggle_live = live
+    gui.set_enabled(self.btn_toggle.box, live)
+    gui.set_enabled(self.btn_toggle.label, live)
+    layout(self)          -- 按钮出现/消失会改变操作条里其余按钮的位置
   end
-  if self.toggle_label ~= label then
-    self.toggle_label = label
-    gui.set_text(self.btn_toggle.label, label)
+  if live then
+    -- 与网页版一致：暂停中 → 高亮（accent）+ 深色字；计时中 → 普通按钮
+    local label = st.paused and text.t("btn_resume") or text.t("btn_pause")
+    if self.toggle_label ~= label then
+      self.toggle_label = label
+      gui.set_text(self.btn_toggle.label, label)
+    end
+    set_color_cached(self.color_cache, "toggle_box", self.btn_toggle.box,
+      st.paused and ui.C.accent or ui.C.card2)
+    set_color_cached(self.color_cache, "toggle_label", self.btn_toggle.label,
+      st.paused and ui.C.accent_ink or ui.C.fg)
   end
-  set_color_cached(self.color_cache, "toggle_box", self.btn_toggle.box, color)
-  gui.set_text(self.btn_sfx.label, text.t("btn_sfx"))
+
+  -- 声音：开 / 关两张图标互斥。图标是白色 PNG，颜色按所在按钮的底色染色
+  -- （light 主题下按钮是浅色，白图标必须染深，否则看不见）
+  self.btn_sfx.set_icon(self.cfg.sound and ui.ICONS.sound_on or ui.ICONS.sound_off)
   set_color_cached(self.color_cache, "sfx_box", self.btn_sfx.box,
     self.cfg.sound and ui.C.accent or ui.C.card2)
-  set_color_cached(self.color_cache, "flip_box", self.btn_flip.box,
+  self.btn_sfx.set_icon_color(self.cfg.sound and ui.C.accent_ink or ui.C.fg)
+
+  -- 180°（对坐）与 ⇵（交换两侧）：开启时操作条上高亮，和网页版的行为提示一致
+  set_color_cached(self.color_cache, "facing_box", self.btn_facing.box,
     self.cfg.facing and ui.C.accent or ui.C.card2)
+  set_color_cached(self.color_cache, "swap_box", self.btn_swap.box,
+    self.cfg.swapped and ui.C.accent or ui.C.card2)
+  self.btn_swap.set_icon_color(self.cfg.swapped and ui.C.accent_ink or ui.C.fg)
+  self.btn_menu.set_icon_color(ui.C.fg)
 end
 
 function render(self)
@@ -387,12 +609,37 @@ function hide_overlay(self)
   for _, n in ipairs(self.ov.nodes) do gui.set_enabled(n, false) end
 end
 
+--[[ 换主题要整屏重建：颜色是在建节点时写进节点的，Defold 没有「按变量重刷」的办法。
+     顺序：删掉所有自建节点 → 重新 build → 重排 → 重画（有对局就照原状态画回去）。 ]]
+local function rebuild(self)
+  ui.clear_nodes(self)
+  self.buttons = {}
+  self.color_cache = {}
+  self.toggle_label, self.toggle_live = nil, nil
+  self.tick_key = nil
+  build(self)
+  layout(self)
+  hide_overlay(self)
+  if self.state then
+    render(self)
+    if self.state.finished and self.state.flagged then
+      show_overlay(self, self.state.flagged)
+    end
+  end
+end
+
 -- ===================== 操作 =====================
 
+--[[ 按钟：整块面板就是那个跷跷板（与网页版 handlePress 同一套规则）。
+
+     未开表时拍某一侧 = 开表，**由对侧开始计时** —— 与实体钟一致：跷跷板压在
+     自己这边，走的是对方的钟。白先走，所以开局拍「黑方」那一侧 → 白方的钟
+     开始倒数（反之亦然，拍白方 → 黑方走）。这一下不算步数（两边仍是 0/0）。
+
+     开表之后：拍自己那一侧 = 走完一手，时间交给对方；拍非走棋方不产生任何效果。 ]]
 function engine_press(self, side)
   if not self.state or self.state.finished then return end
-  -- 尚未开表：无论按哪一侧，都由白方开始（白先走），且不计步数
-  local target = self.state.started and side or "w"
+  local target = self.state.started and side or E.other(side)
   local res = E.press(self.state, target, E.now())
   if DEBUG_INPUT then
     print("DBG clock press side=" .. side .. " target=" .. target ..
@@ -404,16 +651,16 @@ function engine_press(self, side)
   render(self)
 end
 
+--- 暂停 / 继续；未开表时是空操作（开局靠拍面板，没有「开始」按钮）
 function toggle_pause(self)
-  if not self.state or self.state.finished then return end
-  if not self.state.started then
-    engine_press(self, "w")
-    return
-  end
+  if not self.state or self.state.finished or not self.state.started then return end
   if self.state.paused then
     E.resume(self.state, E.now())
   else
     E.pause(self.state, E.now())
+  end
+  if DEBUG_INPUT then
+    print("DBG clock pause paused=" .. tostring(self.state.paused))
   end
   render(self)
 end
@@ -427,6 +674,20 @@ end
 
 function toggle_facing(self)
   self.cfg.facing = not self.cfg.facing
+  if DEBUG_INPUT then
+    print("DBG clock facing facing=" .. tostring(self.cfg.facing) .. " rotated=" .. tostring(self.top_side))
+  end
+  msg.post("#main", "save_settings", { config = self.cfg })
+  layout(self)
+  render(self)
+end
+
+--- 交换两侧：只把两块面板的上下位置对调（旋转跟着「视觉上第一块」走，见 layout）
+function toggle_swap(self)
+  self.cfg.swapped = not self.cfg.swapped
+  if DEBUG_INPUT then
+    print("DBG clock swap swapped=" .. tostring(self.cfg.swapped) .. " top=" .. tostring(self.top_side))
+  end
   msg.post("#main", "save_settings", { config = self.cfg })
   layout(self)
   render(self)
@@ -434,11 +695,34 @@ end
 
 function begin_game(self, config)
   self.cfg = settings.sanitize(config)
+  -- 上次进来之后如果换过主题，节点还是旧配色，这里整套重建一次
+  if use_theme(self, self.cfg.theme) then
+    ui.clear_nodes(self)
+    self.buttons = {}
+    build(self)
+    hide_overlay(self)
+  end
+  --[[ 截图 / 目视核对用：--config=chessclock.demo_byoyomi=1 直接摆一副读秒残局 ——
+       1 分钟主时间 + 20 秒 × 3 段，并且假装已经走了 86 秒（主时间用尽 + 跨过 1 段），
+       这样不用真等 86 秒就能拍到「段数条暗掉一段」的样子。 ]]
+  local demo_byo = (sys.get_config_int("chessclock.demo_byoyomi", 0) == 1)
+  if demo_byo then
+    self.cfg.mode = "byoyomi"
+    self.cfg.baseMin = 1
+    self.cfg.addSec = 20
+    self.cfg.periods = 3
+  end
   self.state = E.newGame(settings.toEngineConfig(self.cfg))
+  if demo_byo then
+    local now = socket.gettime() * 1000
+    E.start(self.state, now, "b")            -- 开表：白方的钟开始走
+    self.state.turnStart = now - 86000
+  end
   print("clock screen ready - " .. E.describeConfig(self.state.cfg))
   self.color_cache = {}
   self.tick_key = nil
   self.toggle_label = nil
+  self.toggle_live = nil            -- nil = 强制下一帧重新决定按钮的显示/隐藏
   for _, side in ipairs({ "w", "b" }) do
     local p = self.pane[side]
     p.time_str, p.name_str, p.foot_str = nil, nil, nil
@@ -455,6 +739,8 @@ function init(self)
   self.buttons = {}
   self.state = nil
   self.cfg = settings.sanitize(nil)
+  ui.set_theme(self.cfg.theme)
+  self.theme = ui.theme_name()
   self.color_cache = {}
   self.overlay_on = false
   build(self)
@@ -465,7 +751,14 @@ end
 function on_message(self, message_id, message, sender)
   if message_id == hash("begin") then
     begin_game(self, message.config)
-  elseif message_id == hash("window_resized") then
+  elseif message_id == hash("theme") then
+    -- 总控在设置页换主题后广播过来（两个 GUI 各自维护自己的节点）
+    self.cfg.theme = theme.normalize(message.theme)
+    if use_theme(self, self.cfg.theme) then
+      rebuild(self)
+    end
+  elseif message_id == hash("relayout") then
+    -- 总控在窗口尺寸变化时发来（见 main.script）：重排 + 重画，命中判定才不会拿着旧坐标
     layout(self)
     if self.state then render(self) end
   end
@@ -523,8 +816,10 @@ function on_input(self, action_id, action)
     toggle_pause(self); return true
   elseif ui.pick(self.btn_sfx, px, py) then
     toggle_sound(self); return true
-  elseif ui.pick(self.btn_flip, px, py) then
+  elseif ui.pick(self.btn_facing, px, py) then
     toggle_facing(self); return true
+  elseif ui.pick(self.btn_swap, px, py) then
+    toggle_swap(self); return true
   elseif ui.pick(self.btn_menu, px, py) then
     msg.post("#main", "back_to_menu"); return true
   elseif gui.pick_node(self.bar_bg, px, py) then

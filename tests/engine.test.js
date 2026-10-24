@@ -381,12 +381,45 @@ test('读秒：配置夹取与文字描述', () => {
   assert.equal(cfg.byoyomiPeriods, 5);
   assert.equal(E.describeConfig(cfg), '60 分钟 + 读秒 30 秒 × 5 段 · Byoyomi 读秒');
 
+  // 读秒 0 秒是合法值：意思是「没有读秒」（只剩主时间），不再夹到 1 秒
   const single = E.normalizeConfig({ mode: 'byoyomi', baseMs: 300_000, byoyomiMs: 0, byoyomiPeriods: 0 });
-  assert.equal(single.byoyomiMs, E.MIN_BYOYOMI_MS, '读秒 0 秒会被夹到最小 1 秒');
+  assert.equal(single.byoyomiMs, 0, '读秒 0 秒表示「没有读秒」');
   assert.equal(single.byoyomiPeriods, 1);
-  assert.equal(E.describeConfig(single), '5 分钟 + 读秒 1 秒 · Byoyomi 读秒');
+  assert.equal(E.describeConfig(single), '5 分钟（无读秒） · Byoyomi 读秒');
 });
 
+test('读秒：主时间 0 = 纯读秒，读秒 0 = 只有主时间（两个不能同时为 0）', () => {
+    // —— 纯读秒：主时间 0，钟上从第一手起就是读秒那一格 ——
+    const pure = game({ mode: 'byoyomi', baseMs: 0, byoyomiMs: 20_000, byoyomiPeriods: 3 });
+    assert.equal(pure.left('w'), 0);
+    const idle = E.readout(pure.state, 'w', pure.now);
+    assert.equal(idle.phase, 'byoyomi', '主时间 0 时空闲状态就显示读秒窗口');
+    assert.equal(idle.ms, 20_000, '空闲时显示一整格读秒');
+    assert.equal(idle.periodsLeft, 3);
+    pure.start('w');
+    pure.at(18_000);                       // 白方想了 18 秒
+    assert.equal(E.readout(pure.state, 'w', pure.now).ms, 2_000);
+    const r1 = pure.press('w');
+    assert.equal(r1.type, 'move');
+    assert.equal(pure.state.periods.w, 3, '没有超过一格，段数不减');
+    pure.at(61_000);                       // 黑方想了 61 秒 = 跨满 3 格（20 秒 × 3）
+    assert.equal(pure.flag(), 'b', '纯读秒下超时同样按段数判负');
+    assert.equal(pure.state.periods.b, 0);
+
+    // —— 只有主时间：读秒 0 秒，用完即负（等价于包干制）——
+    const mainOnly = game({ mode: 'byoyomi', baseMs: 60_000, byoyomiMs: 0, byoyomiPeriods: 3 });
+    mainOnly.start('w');
+    mainOnly.at(59_000);
+    assert.equal(E.readout(mainOnly.state, 'w', mainOnly.now).phase, 'main');
+    assert.equal(mainOnly.flag(), null);
+    mainOnly.at(2_000);
+    assert.equal(mainOnly.flag(), 'w', '没有读秒时主时间归零就判负');
+
+    // —— 两个都是 0：没有意义，回落到 1 分钟主时间 ——
+    const none = E.normalizeConfig({ mode: 'byoyomi', baseMs: 0, byoyomiMs: 0 });
+    assert.equal(none.baseMs, 60_000, '两个都 0 时回落 1 分钟主时间');
+    assert.equal(none.byoyomiMs, 0);
+  });
 test('readout：非读秒模式统一返回主时间阶段', () => {
   const g = game({ mode: 'fischer', baseMs: 60_000, incMs: 5_000 });
   g.start('w');

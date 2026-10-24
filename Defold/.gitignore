@@ -5,6 +5,9 @@ bundle/
 *.log
 log.txt
 
+# 运行期存档（打包产物 / 编辑器运行时写在启动目录，属于本机状态）
+chessclock_settings
+
 # 编辑器本地状态
 .defold/
 .DS_Store

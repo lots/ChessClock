@@ -19,3 +19,7 @@ fonts {
   name: "clock"
   font: "/assets/fonts/clock.font"
 }
+textures {
+  name: "icons"
+  texture: "/assets/icons.atlas"
+}

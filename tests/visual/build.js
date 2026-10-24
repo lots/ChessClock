@@ -42,6 +42,14 @@ function driver() {
     '    }));',
     '  }',
     '  function mode(m) { document.querySelector(\'#modeGroup .seg[data-mode="\' + m + \'"]\').click(); }',
+    '  // 时间预设是下拉框：设值 + 触发 change，等价于用户选了一档',
+    '  function preset(id) {',
+    '    var sel = document.getElementById("presetSelect");',
+    '    sel.value = id;',
+    '    sel.dispatchEvent(new Event("change", { bubbles: true }));',
+    '  }',
+    '  function openHelp() { document.getElementById("btnHelp").click(); }',
+    '  function closeHelp() { document.getElementById("btnHelpBack").click(); }',
     '  function beginClock() { document.getElementById("btnStartGame").click(); }',
     '  // 开局：没有「开始」按钮了，改为拍对侧那一半 —— 拍黑方 → 白方的钟开始走。',
     '  function startClock() { press("b"); }',
@@ -93,6 +101,15 @@ function driver() {
     '    }',
     '',
     '    if (scene === "setup") { return; }',
+    '',
+    '    // 「怎么用」单独一页：从设置页点进去（这一页没有对局，拍完直接停住）',
+    '    if (scene === "help") {',
+    '      run = (function () {',
+    '        mode("byoyomi");',
+    '        openHelp();',
+    '        return wait(200);',
+    '      })();',
+    '    }',
     '',
     '    // 刚进入棋钟页、还没拍过面板：用来核对「没有开始按钮」这件事',
     '    if (scene === "ready") {',
@@ -167,7 +184,7 @@ function driver() {
   ].join('\n');
 }
 
-const SCENES = ['setup', 'ready', 'midgame', 'byoyomi', 'critical', 'states', 'flag', 'measure'];
+const SCENES = ['setup', 'help', 'ready', 'midgame', 'byoyomi', 'critical', 'states', 'flag', 'measure'];
 
 function main() {
   fs.mkdirSync(OUT, { recursive: true });
@@ -178,7 +195,7 @@ function main() {
     const injected = html.replace('</body>', () => '<script>\n' + driver() + '\n</script>\n</body>');
     fs.writeFileSync(path.join(ROOT, '_scene-' + scene + '.html'), injected, 'utf8');
   });
-  console.log('已生成：' + SCENES.map((s) => 'scene-' + s + '.html').join(', ') + ' → ' + OUT);
+  console.log('已生成：' + SCENES.map((s) => '_scene-' + s + '.html').join(', ') + ' → ' + ROOT);
 }
 
 main();

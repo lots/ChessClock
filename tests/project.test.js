@@ -368,6 +368,13 @@ test('首次打开：英文 + Byoyomi 10+3×20，且围棋预设恰好是那 8 �
     '20+5×30', '30+5×30', '30+3×60', '60+5×60'
   ], '围棋预设应恰好是这 8 档（含顺序）');
 
+  // 读秒档不再有 sub：下拉框里只写主记法「10+3×20」，
+  // 否则单行下拉框里会变成「10+3×20 · 20s × 3」（同样三个数说两遍）。
+  assert.ok(!/sub:\s*'/.test(block[1]), '读秒预设不应再有 sub 字段');
+  assert.ok(/var extra = p\.sub \|\| \(p\.name \? t\(p\.name\) : ''\)/.test(app),
+    '下拉框第二段应「有才拼」（棋类有档次，读秒没有）');
+  assert.ok(/o\.textContent = extra \?\s*presetLabel\(p\) \+ '  ·  ' \+ extra : presetLabel\(p\)/.test(app),
+    '没有第二段时下拉框条目只显示主记法');
   // 这组预设只用在 Byoyomi；其它模式仍用国际象棋那组
   assert.ok(/mode === E\.MODES\.BYOYOMI \? PRESETS_BYOYOMI : PRESETS_CHESS/.test(app),
     'presetsFor() 应只把围棋预设用在 Byoyomi 模式');
@@ -557,6 +564,55 @@ test('站点图标（favicon / iOS 主屏）都指向 logo 资源，且 PNG 已�
   });
 });
 
+test('最后 10 秒提示音：主时间也响，四种模式通用', () => {
+  assert.ok(/var TICK_LAST_MS = 10000/.test(app), 'app.js 应有 10 秒提示音的窗口常量');
+  assert.ok(/function lastTenTick/.test(app), 'app.js 应有 lastTenTick()');
+  // 关键：不再把「相位」限制在读秒
+  assert.ok(!/info\.phase !== 'byoyomi'\) \{ return/.test(app),
+    '提示音不应只对读秒阶段生效');
+  assert.ok(/var turn = S\.moves\.w \+ S\.moves\.b/.test(app),
+    'key 里要带「第几手」，否则 Fischer 加秒后再次进入最后 10 秒不会重新响');
+  assert.ok(/lastTenTick\(side, info\)/.test(app), 'render() 里每帧都要过一遍提示音判定');
+  // 提示音在四种模式都该工作：只依赖 ms，与 cfg.mode 无关
+  const fn = app.slice(app.indexOf('function lastTenTick'), app.indexOf('function lastTenTick') + 900);
+  assert.ok(fn.indexOf('cfg.mode') < 0, 'lastTenTick 不应按模式分支（所有模式都滴）');
+});
+test('读秒段数条：两块面板各一条，只在 Byoyomi 模式点亮', () => {
+  // 结构：每块面板底部各一条（.pane-inner 里，跟着对坐一起转）
+  assert.equal((html.match(/class="byo-bar"/g) || []).length, 2,
+    'index.html 里两块面板应各有一条 .byo-bar');
+  assert.ok(/<span class="byo-bar" data-side="w"/.test(html), '白方面板缺段数条');
+  assert.ok(/<span class="byo-bar" data-side="b"/.test(html), '黑方面板缺段数条');
+  // 样式：默认隐藏，.pane.has-byo-bar 才显示；一格一段，亮/暗两态
+  assert.ok(/\.byo-bar\s*\{[\s\S]{0,240}?display:\s*flex/.test(css), '.byo-bar 应是横向一排格子');
+  assert.ok(/\.pane\.has-byo-bar \.byo-bar\s*\{\s*display:\s*flex/.test(css),
+    '应由 .pane.has-byo-bar 控制显隐（只在 Byoyomi 模式出现）');
+  // 位置：夹在「数字」与「MOVE 那一行」之间（DOM 里 .time 之后、.pane-foot 之前），且不绝对定位
+  assert.ok(/\.time" data-side="[wb]">[^<]*<\/span>\s*<span class="byo-bar"/.test(html) ||
+            /<span class="time" data-side="[wb]">[\s\S]{0,40}<span class="byo-bar" data-side="[wb]"/.test(html),
+    '段数条应紧跟在时间数字之后（DOM 顺序）');
+  assert.ok(/<span class="byo-bar"[^>]*><\/span>\s*<span class="pane-foot"/.test(html),
+    '段数条应在「MOVE 那一行」之前（DOM 顺序）');
+  assert.ok(!/\.byo-bar\s*\{[\s\S]{0,200}?position:\s*absolute/.test(css),
+    '段数条应在正常流里排版，不再绝对定位到面板底部');
+  // 颜色：还剩的段是绿色，已用掉的段是红色（和 Godot / Defold 两版同一套语义）
+  assert.ok(/\.byo-bar i\s*\{[\s\S]{0,120}?background:\s*var\(--danger\)/.test(css),
+    '已用掉的段应是红色（--danger）');
+  assert.ok(/\.byo-bar i\.is-on\s*\{\s*background:\s*var\(--ok\)/.test(css),
+    '还剩的段应是绿色（--ok）');
+  // 段数条不再用面板的读秒紫，而是独立的绿/红两色（见下）
+  // 逻辑：render 里按模式开关，格数跟着 byoyomiPeriods，亮几格 = 还剩几段
+  assert.ok(/function updateByoBar/.test(app), 'app.js 应有 updateByoBar()');
+  assert.ok(/has-byo-bar/.test(app), 'render() 应按模式给面板加 has-byo-bar');
+  assert.ok(/S\.cfg\.mode !== E\.MODES\.BYOYOMI/.test(app), '非 Byoyomi 模式不画段数条');
+  assert.ok(/builtBarPeriods\[side\] !== total/.test(app), '段数变了要重建格子');
+  assert.ok(/classList\.toggle\('is-on', k < left\)/.test(app), '亮着的格数应等于剩余段数');
+  // 正在倒计时的那一段按窗口剩余比例画成进度条：绿在前、红贴右
+  assert.ok(/linear-gradient\(to right, var\(--ok\) 0 ' \+ pct \+ '%, var\(--danger\)/.test(app),
+    '倒计时中的那一段应是绿→红渐变（比例取自本窗口剩余时间）');
+  assert.ok(/ratio = Math\.max\(0, Math\.min\(1, info\.ms \/ S\.cfg\.byoyomiMs\)\)/.test(app),
+    '比例应 = 本窗口剩余 / 读秒秒数');
+});
 test('读秒模式在引擎 / 设置项 / 文案 / 时间字段四处都接上了', () => {
   assert.ok(/BYOYOMI:\s*'byoyomi'/.test(engine), 'engine.js 应定义 byoyomi 模式');
   assert.ok(/data-mode="byoyomi"/.test(html), 'index.html 缺少读秒模式按钮');

@@ -2,21 +2,45 @@
 
 **English** · [华文](README_CN.md)
 
-A web clock you can put on the table **at a community or school event right now**: plain HTML5 + vanilla
-JavaScript, zero dependencies, no backend, **works offline**. It is **for both chess and Weiqi (Go)** — it suits
-Go very well, since byoyomi *is* the standard Go time system, and the whole half-screen is a press button so
-either player can just slap their own side. Open it in a phone browser and it is a tournament clock; double-click
-`index.html` on a PC and it is an arbiter's desk clock.
+A chess / Weiqi (Go) clock made to **sit on the table between two players**: the whole half-screen is the press
+button, so either player just slaps their own side — no aiming at small buttons. Plain HTML5 + vanilla JavaScript,
+zero dependencies, no backend, **works offline**. It is **for both chess and Weiqi (Go)**, and it suits Go
+especially well: byoyomi *is* the standard Go time system.
+
+> ### 📱 Phone first — a PC is for developing and testing
+>
+> The product is a **phone lying flat between the two players**, and the two versions built for that are the
+> **web version** (this folder) and the **Godot version** ([`Godot/`](Godot/README.md), which becomes an Android
+> app). All three versions also run on a PC — double-click `index.html`, or use a desktop build — which is exactly
+> what the automated tests, the screenshot rig and day-to-day development use. Treat PC runs as
+> **developer testing**; judge the UI on a phone. (An arbiter's laptop is the one non-developer exception.)
+
+## Three versions of this clock
+
+The same clock, three implementations, kept behaviourally in sync — the other two are automatically diffed against
+this web version, so they cannot quietly diverge:
+
+| | Version | Tech | Getting it onto a phone | Automated coverage |
+| --- | --- | --- | --- | --- |
+| **1** | **Web** — this folder. **Use this one first on a phone.** | HTML5 + vanilla JS, no build step, 53 tests | open it in the phone browser → *Add to Home Screen* (nothing to install, no store, offline after the first load) | **the reference implementation**: every constant / string / preset / colour of the other two is compared against it |
+| **2** | **Godot 4** — [`Godot/`](Godot/README.md). **The native-app version for Android.** | GDScript, Godot 4.5 | build the Android APK once (see [`Godot/README.md`](Godot/README.md) — the output is not committed) | **well tested**: 31 engine cases (220 assertions) + 21 headless UI cases (126 assertions) + 417 cross-checks + 17 screenshots |
+| **3** | **Defold** — [`Defold/`](Defold/README.md) | Lua, Defold 1.13 | native build with Defold / `bob` (Linux, Windows, macOS, Android, HTML5) | **least tested of the three**: 31 engine + 13 settings cases and 20 static checks pass, but there is **no headless UI suite** — the interface was verified with screenshots plus one scripted real-mouse run |
+
+**Why the web version comes first**: nothing to install, nothing to sign, the same thing works on iPhone and
+Android, and updating means copying a folder. **When to take the Godot version**: you want a real installed
+Android app (native sound, keep-awake, hardware back button).
+
+**The Godot version has been tested more than the Defold version.** Godot has a headless UI suite that
+instantiates the real scene and clicks through it, a 417-item automated diff against this web version, and 17
+committed screenshots. Defold's engine and settings tests pass and its screenshots were reviewed, but its
+interface has only been exercised by a single scripted click run — so if you want a native build and have no
+reason to prefer Defold, choose Godot. (Both ports' READMEs are currently in Chinese.)
 
 The interface is **bilingual (English / Chinese)**: the `ENG / 华文` button at the top right of the setup page
 switches it at any time and the choice is remembered (you can also force it with `index.html?lang=zh`).
 
-> There is also a **Defold (Lua) port**: [`Defold/`](Defold/README.md) — the same product with the same timing
-> semantics (the 8 constants and 30 test cases are cross-checked automatically), and it can be packaged as a
-> native Windows / macOS / Linux / Android / iOS / HTML5 app. (Its README is in Chinese for now.)
-
 <img src="screenshots/midgame-portrait.png" alt="Facing mode, portrait (default dark theme)" width="390">
-<img src="screenshots/byoyomi-portrait.png" alt="Byoyomi mode" width="390">
+<img src="screenshots/byoyomi-portrait.png" alt="Byoyomi mode: the segmented bar under each panel is green for the periods you still have and red for the ones you have spent" width="390">
 <img src="screenshots/midgame-landscape.png" alt="Landscape" width="390">
 
 > These are produced automatically by `tests/visual/`. **The screenshot scenes shorten the main time to 1 minute**
@@ -45,7 +69,7 @@ actually uses:
 | Sudden death (no increment) | ✅ | The simplest mode, common in community events |
 | Flag fall (time-up handling) | ✅ | Red digits + alarm + vibration + result overlay |
 | Time warnings | ✅ | Amber at ≤1 minute, red with 0.1 s resolution at ≤20 seconds |
-| Byoyomi indicator | ✅ | Digits turn purple, remaining periods shown, ticks every second for the last 10 |
+| Byoyomi indicator | ✅ | Digits turn purple, remaining periods shown, **plus a segmented bar between the digits and the move line** (one segment per period: **green = still available, red = already used**; the segment being counted down fills red from the right as its window drains, so at 5 s left of a 20 s window it is 75% red / 25% green), ticks every second for the last 10 (main time ticks too — all four modes) |
 | Move counter | ✅ | Each panel shows how many moves that side has played |
 | Pause / resume (for the arbiter taking notation or settling a dispute) | ✅ | Pausing banks the exact time (and byoyomi periods) used on the current move |
 | Reset / rematch (swapping colours) | ✅ | One tap starts the next game |
@@ -59,11 +83,11 @@ actually uses:
 
 ---
 
-## 2. Running it
+## 2. Running it — phone first
 
-### Option 1 — phone as the clock (recommended, this is what you use at the event)
+### Option 1 — the web version on a phone (this is the product)
 
-On the PC:
+On the PC (only to serve the files):
 
 ```bash
 node serve.js            # port 8080 by default; or PORT=8081 node serve.js
@@ -83,12 +107,15 @@ Connect the phone to the same Wi-Fi and open that `192.168.x.x` address in its b
 (If the phone cannot open it, Windows Firewall is usually blocking Node — the first run pops up a dialog, choose
 “allow on private networks”.)
 
-### Option 2 — local use on a PC
+### Option 2 — the Godot version as an Android app
 
-Just double-click `index.html`. Everything works (including facing rotation, sound and fullscreen) with no server
-at all.
+Build the Android APK with Godot 4.5 and install it on the phone (`adb install -r Godot/build/CoQChessClock-debug.apk`,
+or copy the file over and tap it) — the exact command is in [`Godot/README.md`](Godot/README.md). The APK is a
+**build output and is not committed**, so build it once on your machine. Same clock, but a real installed app:
+native sound, keep-awake, hardware back-button handling. Android is the only platform the APK has been built for
+so far.
 
-### Option 3 — host it online (players open it on their own phones)
+### Option 3 — host the web version online (players open it on their own phones)
 
 The whole folder is static: drop it on any static host, **no backend, no database**:
 
@@ -96,7 +123,13 @@ The whole folder is static: drop it on any static host, **no backend, no databas
 * Netlify Drop: drag the folder onto <https://app.netlify.com/drop>
 * Vercel / Cloudflare Pages: same idea
 
-### Two things worth doing (strongly recommended)
+### Option 4 — on a PC (development and testing)
+
+Double-click `index.html`: everything works (facing rotation, sound, fullscreen) with no server at all. This is
+how the screenshot rig, the tests and daily development run — and an arbiter can use a laptop in a pinch — but
+the device this clock is designed for is the phone on the table.
+
+### Two things worth doing on the phone (strongly recommended)
 
 1. **Add to home screen**: phone browser menu → “Add to Home Screen”. No address bar, nearly fullscreen, and it
    opens offline (the files are cached locally).
@@ -108,7 +141,10 @@ The whole folder is static: drop it on any static host, **no backend, no databas
 
 ### Game flow
 
-1. On the setup page pick the **timing mode** and the **time control** (a preset is fine), then tap “Start game”.
+1. On the setup page pick the **timing mode**, then the **time control** from the dropdown at the top of card 2
+   (a preset is fine; the last entry, **Custom**, is picked automatically once you type your own numbers), then
+   tap “Start game”. The setup page ends with a **“How to use ›”** row: it opens a separate page with the
+   placement / `180°` explanation and the byoyomi primer (`Esc` or the “Back to setup” button returns).
 2. On the clock screen **there is no Start button** — the panels *are* the see-saw. Tapping one side stops that
    side's clock and starts the other side's, so to begin a game (White to move first) **tap Black's half**:
    White's clock starts counting down at once. Tapping White's half instead starts Black's clock, in case Black
@@ -132,7 +168,7 @@ The whole folder is static: drop it on any static host, **no backend, no databas
 | ⛶ | Fullscreen (iOS Safari has no web fullscreen — use “Add to Home Screen” instead) |
 | ⚙ | Back to setup (asks for confirmation during a game) |
 
-### Keyboard, when a PC is the clock
+### Keyboard shortcuts (when you run it on a PC)
 
 | Key | What it does |
 | --- | --- |
@@ -166,8 +202,8 @@ The whole folder is static: drop it on any static host, **no backend, no databas
 > Byoyomi and Bronstein delay are the pair people mix up: Bronstein hands you N seconds on **every move from move
 > 1**; byoyomi is **the monthly salary that starts only after your savings are gone**.
 
-Built-in presets (you can always type your own: 1–180 minutes / 0–180 byoyomi seconds / 1–20 periods) —
-**the presets follow the mode**:
+Built-in presets live in a **dropdown** (you can always type your own: 1–180 minutes / 0–180 byoyomi seconds /
+1–20 periods — the dropdown then shows “Custom”) — **the presets follow the mode**:
 
 **Chess-style modes** (Fischer / Bronstein / sudden death):
 
@@ -196,8 +232,9 @@ Built-in presets (you can always type your own: 1–180 minutes / 0–180 byoyom
 | 30+3×60 | 30 min + 60 s × 3 periods | Slow games |
 | 60+5×60 | 60 min + 60 s × 5 periods | Formal slow games |
 
-> The small line under each button (e.g. `20s × 3`) spells the order out: it is the same thing as the main
-> notation `3×20`.
+> Every entry is written once, in the Go notation: `30+5×30` already says main time (30 min), number of periods
+> (5) and seconds per move (30), so the dropdown does not repeat it in a second reading. (Chess entries do carry
+> a second half — `10+5 · Rapid` — because there it is the class name, not a restatement.)
 > `10+3×20` is **also applied automatically the first time you switch to Byoyomi** from another mode, so a
 > Fischer `5+3` does not turn into “5 min + 3 s × 3 periods” by accident. If the three numbers already match a
 > Byoyomi preset (you picked one yourself), the preset is left alone.
@@ -216,16 +253,27 @@ which is exactly this clock's Byoyomi mode, and **that is what you get on first 
 | 30 min main time, then 30 s × 5 per move | Pick the preset **30+5×30** |
 | 1 hour main time, then 60 s × 5 per move | Pick the preset **60+5×60** |
 | 40 min main time, then 30 s × 3 per move | There is no 40-minute preset: choose **Byoyomi** and change the three numbers to 40 / 30 / 3 |
-| Absolute time only (flag falls, you lose) | Choose **Sudden death**, or set the byoyomi periods to 1 |
+| Absolute time only (flag falls, you lose) | Choose **Sudden death**, or set the byoyomi seconds to 0 (see below) |
+| Pure byoyomi (no main time at all) | Set **Base time** to 0 and keep the byoyomi seconds |
 
-The preset buttons use “main time + periods × seconds per move”: `30+5×30` is 30 minutes of main time, then
-30 seconds per move for 5 periods (you may overthink 4 times and lose on the fifth); the small `30s × 5` line is
-the same thing written in the other order.
+> **Either field may be 0 — never both.** In Byoyomi mode the two numbers are a pair and only one of them has to
+> be non-zero:
+> * **Base time = 0** → *pure byoyomi*: the clock shows one byoyomi window from the very first move, there is no
+>   main time to burn down;
+> * **Byoyomi = 0 s** → *main time only*: when the main time runs out the flag falls (same as sudden death), and
+>   the period bar in the panel stays hidden;
+> * **both 0** is meaningless, so the field you just edited snaps back to 1 (or a stored config falls back to
+>   1 minute of main time). Other modes (Fischer / Bronstein / sudden death) have no second number to fall back
+>   on, so their base time stays at 1–180 minutes.
+
+The preset dropdown uses “main time + periods × seconds per move”: `30+5×30` is 30 minutes of main time, then
+30 seconds per move for 5 periods (you may overthink 4 times and lose on the fifth). Each number appears exactly
+once — main time, then periods, then seconds per move.
 
 During the game it works like chess: lay the phone flat between the two players, turn on **facing mode**, and
 whoever has just played slaps their own half of the screen. To start, tap **Black's** half so White's clock runs
 first (see the game flow in section 3). The digits fill the panel automatically so they are readable from across
-the table. The usual Go “30 seconds per move” byoyomi ticks audibly for the last 10 seconds.
+the table. Anything below 10 seconds ticks audibly once per second — the main time of **every** mode as well as each byoyomi window, so the usual Go “30 seconds per move” byoyomi ticks just like a 3+2 blitz finish.
 
 ---
 
@@ -299,7 +347,10 @@ the other side's clock begins. There is no Start button to press.
 7. **Privacy**: no network access, nothing uploaded; settings (mode/time/sound) live only in your own
    `localStorage`.
 8. **What loses in byoyomi mode**: **exhausting the byoyomi periods**, not the main time reaching zero. The move
-   line on the panel shows “Byoyomi 2/3”; watch out when only the last period is left. Pausing banks the periods
+   line on the panel shows “Byoyomi 2/3”, and the **segmented bar just under the digits** says the same thing
+   in one glance — 3 segments = 3 periods, and the one currently counting down drains from green to red as its window
+   runs out (5 s left of a 20 s period = 75% red); watch out when
+   only one is still **green**. Pausing banks the periods
    already crossed, and on resume the current byoyomi window is refilled (so nobody loses byoyomi time to a
    pause).
 9. **Starting the game**: there is no Start button — tapping a panel *is* the start gesture (tap Black's half for
@@ -333,15 +384,16 @@ ChessClock/
 ├── serve.js              zero-dependency static server (for phones on the LAN)
 ├── tests/
 │   ├── engine.test.js    timing engine tests (30)
-│   ├── project.test.js   project-integrity tests (19: i18n / themes / defaults / presets / scenes / start-up / facing geometry / icons …)
+│   ├── project.test.js   project-integrity tests (22: i18n / themes / defaults / presets / scenes / start-up / facing geometry / icons …)
 │   ├── run.js            single-process test entry point
 │   └── visual/           headless-Chrome visual rig (screenshots) + out/*.png artefacts
 ├── Defold/               the Defold (Lua) port: native apps and HTML5, see Defold/README.md
+├── Godot/                the Godot 4 port: native apps and Web, see Godot/README.md
 └── package.json          npm test / npm start / npm run shots
 ```
 
 ```bash
-npm test        # 50 tests: timing logic + page/icon/bilingual/theme/defaults/byoyomi-seed/screenshot-scene integrity
+npm test        # 53 tests: timing logic + page/icon/bilingual/theme/defaults/byoyomi-seed/screenshot-scene/byoyomi-bar integrity
 npm start       # start the LAN server, open it on your phone
 npm run shots   # re-shoot every scene with headless Chrome (needs Chrome/Edge installed)
 ```

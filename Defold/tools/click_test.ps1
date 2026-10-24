@@ -34,6 +34,7 @@ if (-not $exe) { Write-Output 'FAIL: 没找到 bundle 里的 exe，请先跑 too
 
 $sig = @'
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 public class ClockInput {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
@@ -47,8 +48,51 @@ public class ClockInput {
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool repaint);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, IntPtr extra);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr p);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
+  public delegate bool EnumProc(IntPtr h, IntPtr p);
   public struct RECT { public int Left, Top, Right, Bottom; }
   public struct POINT { public int X, Y; }
+
+  // 调试版 exe 会先弹一个控制台窗口（标题是启动命令行，带 .exe）：
+  // 它既可能被 MainWindowHandle 选错，也会挡住游戏窗口、吃掉点击。
+  // 所以：① 按「不是控制台」找游戏窗口；② 把控制台藏起来。
+  public static IntPtr FindGame(uint pid) {
+    IntPtr best = IntPtr.Zero;
+    long bestArea = 0;
+    EnumWindows(delegate(IntPtr h, IntPtr p) {
+      uint wpid; GetWindowThreadProcessId(h, out wpid);
+      if (wpid != pid || !IsWindowVisible(h)) { return true; }
+      var sb = new StringBuilder(512);
+      GetWindowTextW(h, sb, 512);
+      if (sb.ToString().IndexOf(".exe", StringComparison.OrdinalIgnoreCase) >= 0) { return true; }
+      RECT r;
+      if (!GetWindowRect(h, out r)) { return true; }
+      long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+      if (area > bestArea) { bestArea = area; best = h; }
+      return true;
+    }, IntPtr.Zero);
+    return best;
+  }
+
+  public static int HideConsole(uint pid) {
+    int n = 0;
+    EnumWindows(delegate(IntPtr h, IntPtr p) {
+      uint wpid; GetWindowThreadProcessId(h, out wpid);
+      if (wpid != pid || !IsWindowVisible(h)) { return true; }
+      var sb = new StringBuilder(512);
+      GetWindowTextW(h, sb, 512);
+      if (sb.ToString().IndexOf(".exe", StringComparison.OrdinalIgnoreCase) >= 0) {
+        ShowWindow(h, 0);
+        n++;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return n;
+  }
 }
 '@
 Add-Type -TypeDefinition $sig
@@ -57,13 +101,26 @@ Add-Type -TypeDefinition $sig
 $logCandidates = @((Join-Path $exe.DirectoryName 'log.txt'), (Join-Path $root 'log.txt'))
 foreach ($f in $logCandidates) { if (Test-Path $f) { Remove-Item $f -Force } }
 
+# 清掉上一局留下的设置：设置是「记住上一次的选择」的，如果上一轮测试把「交换两侧」
+# 打开了，这一轮的上下两块面板就是反的（点 pane_b 会点到白方那块）。
+$settingsFile = Join-Path $exe.DirectoryName 'chessclock_settings'
+if (Test-Path $settingsFile) { Remove-Item $settingsFile -Force }
+
+# reset_settings=1：每轮都从「首次启动的默认设置」开始（否则上一轮点开的
+# 「交换两侧」会留在存档里，这一轮的上下两块面板就是反的，点击全对不上）。
 $p = Start-Process -FilePath $exe.FullName `
-  -ArgumentList '--config=chessclock.debug_input=1' `
+  -ArgumentList '--config=chessclock.debug_input=1 --config=chessclock.reset_settings=1' `
   -WorkingDirectory $exe.DirectoryName -PassThru
 Start-Sleep -Seconds $WaitSeconds
-$p.Refresh()
-$h = $p.MainWindowHandle
-if ($h -eq 0) { Stop-Process -Id $p.Id -Force; Write-Output 'FAIL: 拿不到窗口句柄'; exit 1 }
+$h = [ClockInput]::FindGame([uint32]$p.Id)
+if ($h -eq [IntPtr]::Zero) {
+  $p.Refresh()
+  $h = $p.MainWindowHandle
+  if ($h -ne [IntPtr]::Zero) { Write-Output 'WARN: 没找到游戏窗口，退回 MainWindowHandle' }
+}
+if ($h -eq [IntPtr]::Zero) { Stop-Process -Id $p.Id -Force; Write-Output 'FAIL: 拿不到窗口句柄'; exit 1 }
+$hidden = [ClockInput]::HideConsole([uint32]$p.Id)
+if ($hidden -gt 0) { Write-Output ("已隐藏控制台窗口 {0} 个" -f $hidden) }
 
 # 顺序很重要：先让窗口恢复正常大小，再摆位置，最后置顶并抢焦点。
 # （反过来的话 ShowWindow(SW_RESTORE) 会把窗口还原回原位，点击全部落偏）
@@ -71,8 +128,9 @@ if ($h -eq 0) { Stop-Process -Id $p.Id -Force; Write-Output 'FAIL: 拿不到窗�
 Start-Sleep -Milliseconds 400
 [void][ClockInput]::MoveWindow($h, 40, 20, $Width, $Height, $true)
 Start-Sleep -Milliseconds 400
+# 整个测试期间让游戏窗口保持 TOPMOST：窗口是否拿到前台焦点会随环境变化，
+# 而 mouse_event 是「点屏幕」，只要有别的窗口压在它上面，点击就会跑到别人那里去。
 [void][ClockInput]::SetWindowPos($h, [IntPtr](-1), 40, 20, $Width, $Height, 0x0040)  # TOPMOST
-[void][ClockInput]::SetWindowPos($h, [IntPtr](-2), 40, 20, $Width, $Height, 0x0040)  # NOTOPMOST
 [void][ClockInput]::SetForegroundWindow($h)
 Start-Sleep -Milliseconds 2500
 Write-Output ("前台窗口匹配: {0}" -f ([ClockInput]::GetForegroundWindow() -eq $h))
@@ -125,10 +183,15 @@ function Get-ScaleY($map) {
   return 1.0
 }
 
+# 每次点击前都把窗口重新顶到最前：SetForegroundWindow 在这种「非交互会话」里
+# 经常被 Windows 拒绝（日志里显示 前台窗口匹配: False），只靠前台焦点不可靠，
+# 所以额外重新声明 TOPMOST —— mouse_event 点的是屏幕，窗口必须真的在最上面。
+# 把窗口抬到最前：光标落在它上面时，激活/悬停才正常（截图也不会被别的窗口挡住）
 function Focus-Window {
+  [void][ClockInput]::SetWindowPos($h, [IntPtr](-1), 40, 20, $Width, $Height, 0x0040)  # TOPMOST
   if ([ClockInput]::GetForegroundWindow() -ne $h) {
     [void][ClockInput]::SetForegroundWindow($h)
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 150
   }
 }
 
@@ -145,51 +208,37 @@ function Click-Point([int]$cx, [int]$cy) {
   $o = Get-Origin
   [void][ClockInput]::SetCursorPos($o.X + $cx, $o.Y + $cy)
   Start-Sleep -Milliseconds 250
-  [ClockInput]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+  [ClockInput]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)   # LEFTDOWN
   Start-Sleep -Milliseconds 90
-  [ClockInput]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
-  Start-Sleep -Milliseconds 500
+  [ClockInput]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)   # LEFTUP
+  Start-Sleep -Milliseconds 350
 }
 
-# 日志计数：用来判断"这一次点击游戏到底有没有收到"。
-# 比"看效果"更可靠——窗口刚激活时的第一次点击常被系统吃掉（只激活不投递），
-# 只按时间盲点就会出现"同一份代码有时过有时不过"。
-function Count-MenuPresses {
-  $raw = Get-Content (Get-LogPath) -Raw -ErrorAction SilentlyContinue
-  if (-not $raw) { return 0 }
-  return ([regex]::Matches($raw, 'DBG menu input action=\S+ pressed=true')).Count
-}
-function Count-ClockPresses {
-  $raw = Get-Content (Get-LogPath) -Raw -ErrorAction SilentlyContinue
-  if (-not $raw) { return 0 }
-  return ([regex]::Matches($raw, 'DBG clock press')).Count
-}
-
-# 点某个控件：$verify='menu'|'clock' 表示"必须看到这类日志多一条"，$expect 是额外的内容核对。
-# 没生效就重新聚焦再点（最多 5 次），并把每次的结果打出来。
-function Click-Id($id, $map, [string]$expect = '', [string]$verify = 'menu') {
-  if (-not $map.ContainsKey($id)) { Write-Output ("  跳过 {0}：日志里没有它的坐标" -f $id); return $false }
+# 点某个控件，并核对日志里是否出现了预期的那一行。
+# 为什么不数「收到了几次输入」：引擎是**缓冲写日志**的，计数法会在刷盘前误判成
+# "没收到"从而重复点击（于是同一个按钮被点两三次）。以「预期内容出现」为准最稳。
+# 没生效就重试（最多 8 次），每次都会把点击坐标打出来。
+function Click-Id($id, [string]$expect = '') {
+  # 每次都重新读坐标：窗口尺寸变化、界面切换、模式切换都会让 layout 重算位置，
+  # 用开头读一次的旧坐标去点，会点到别的地方（本脚本踩过这个坑）。
+  $map = Read-Positions
+  if (-not $map.ContainsKey($id)) { Write-Output ("  跳过 {0}：日志里没有它的坐标" -f $id); return }
   $sx = Get-ScaleX $map
   $sy = Get-ScaleY $map
   $cx = [int]($map[$id][0] * $sx)
   $cy = [int]($clientH - $map[$id][1] * $sy)
-  for ($try = 1; $try -le 5; $try++) {
-    $before = if ($verify -eq 'clock') { Count-ClockPresses } else { Count-MenuPresses }
+  for ($try = 1; $try -le 8; $try++) {
     Click-Point $cx $cy
     Write-Output ("  点击 {0} -> 客户区({1},{2}){3}" -f $id, $cx, $cy, $(if ($try -gt 1) { "  第 $try 次" } else { '' }))
-    Start-Sleep -Milliseconds 350
-    $after = if ($verify -eq 'clock') { Count-ClockPresses } else { Count-MenuPresses }
-    if ($verify -ne 'none' -and $after -le $before) {
-      Write-Output '    （这次点击游戏没收到，多半被窗口激活吃掉，重试）'
-      continue
+    if (-not $expect) { return }
+    for ($w = 0; $w -lt 10; $w++) {
+      Start-Sleep -Milliseconds 300
+      $raw = Get-Content (Get-LogPath) -Raw -ErrorAction SilentlyContinue
+      if ($raw -and $raw -match $expect) { return }
     }
-    if (-not $expect) { return $true }
-    Start-Sleep -Milliseconds 700   # 等引擎把日志刷到磁盘，免得误判成"没生效"而重复点击
-    $raw = Get-Content (Get-LogPath) -Raw -ErrorAction SilentlyContinue
-    if ($raw -match $expect) { return $true }
+    Write-Output '    （这次点击没生效，重试）'
   }
   Write-Output ("  警告：{0} 点了几次都没达到预期 {1}" -f $id, $expect)
-  return $false
 }
 
 # ---- 等日志出现控件坐标 ----
@@ -203,47 +252,72 @@ if (-not $pos.ContainsKey('start')) { Stop-Process -Id $p.Id -Force; Write-Outpu
 Write-Output ("菜单控件坐标已读取: {0} 个" -f ($pos.Keys | Where-Object { $_ -notmatch '^__' }).Count)
 
 Write-Output ''
-Write-Output '[0/3] 先点几下标题区空白处（热焦点：实测窗口刚摆好时头三次点击会落偏）'
+Write-Output '[0/6] 先点几下标题区空白处（热焦点：实测窗口刚摆好时头三次点击会落偏）'
 1..3 | ForEach-Object { Click-Point 350 60; Start-Sleep -Milliseconds 400 }
 
-Write-Output '[1/3] 点模式按钮 Sudden'
-[void](Click-Id 'mode_sudden' $pos 'DBG menu mode sudden')
+function Save-Shot([string]$name) {
+  Add-Type -AssemblyName System.Drawing
+  $wr = New-Object ClockInput+RECT
+  [void][ClockInput]::GetWindowRect($h, [ref]$wr)
+  $bw = $wr.Right - $wr.Left
+  $bh = $wr.Bottom - $wr.Top
+  $bmp = New-Object System.Drawing.Bitmap $bw, $bh
+  $gr = [System.Drawing.Graphics]::FromImage($bmp)
+  $gr.CopyFromScreen($wr.Left, $wr.Top, 0, 0, $bmp.Size)
+  $shot = Join-Path $root ("tests\screenshots\" + $name)
+  $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
+  $gr.Dispose(); $bmp.Dispose()
+  Write-Output ("  已截图: {0}  ({1}x{2})" -f $shot, $bw, $bh)
+}
+
+Write-Output '[1/6] 点模式按钮 Sudden'
+Click-Id 'mode_sudden' 'DBG menu mode sudden'
 
 if ($PresetId -ne '') {
-  Write-Output ("[1b] 点预设 " + $PresetId + "（用来把时间调短，便于验证超时结算）")
-  [void](Click-Id ("preset_" + $PresetId) $pos)
+  # 预设改成下拉框了：先点开（浮层里会打出 preset_opt_<n> 的坐标），再点第 n 档
+  Write-Output ("[1b] 打开预设下拉框，点第 " + $PresetId + " 档（用来把时间调短，便于验证超时结算）")
+  Click-Id 'preset_select' 'DBG menu preset_select true'
+  Click-Id ("preset_opt_" + $PresetId) 'DBG menu preset'
 }
 
-Write-Output '[2/3] 点 START GAME'
-[void](Click-Id 'start' $pos 'clock screen ready')
+Write-Output '[2/6] 点 START GAME'
+Click-Id 'start' 'clock screen ready'
 Start-Sleep -Milliseconds 1200
 
-Write-Output '[3/3] 在棋钟界面点白方面板两次（开表 + 走一步）'
-$pos2 = @{}
+# 开局方式（与网页版一致）：没有 Start 按钮，拍**对侧**面板开表 ——
+# 白先走，所以拍黑方那一侧 → **白方的钟开始走**，这一下不算步数（仍是 0/0）。
+Write-Output '[3/6] 点黑方面板开表（白方的钟开始走，不算步数）'
 for ($try = 0; $try -lt 10; $try++) {
-  $pos2 = Read-Positions
-  if ($pos2.ContainsKey('pane_w')) { break }
+  $tmp = Read-Positions
+  if ($tmp.ContainsKey('pane_w') -and $tmp.ContainsKey('pane_b')) { break }
   Start-Sleep -Milliseconds 500
 }
-[void](Click-Id 'pane_w' $pos2 '' 'clock')
-[void](Click-Id 'pane_w' $pos2 '' 'clock')
+Click-Id 'pane_b' 'DBG clock press side=b target=w result=start'
+
+Write-Output '[4/6] 点白方面板 = 走完一手（时间交给黑方）'
+Click-Id 'pane_w' 'DBG clock press side=w target=w result=move'
+
+# 开表后操作条里会多出 P / C（未开表时它是隐藏的）
+for ($try = 0; $try -lt 10; $try++) {
+  $tmp = Read-Positions
+  if ($tmp.ContainsKey('bar_toggle')) { break }
+  Start-Sleep -Milliseconds 400
+}
+
+Write-Output '[5/6] 点操作条「交换两侧」（两块面板的上下位置对调，旋转跟着视觉第一块走）'
+Click-Id 'bar_swap' 'DBG clock swap swapped=true'
+Start-Sleep -Milliseconds 600
+Save-Shot 'clock-running.png'
+
+Write-Output '[6/6] 点操作条 P 暂停、再点一次继续（按钮上只有 P / C）'
+Click-Id 'bar_toggle' 'DBG clock pause paused=true'
+Click-Id 'bar_toggle' 'DBG clock pause paused=false'
 
 # 可选：等一方超时，验证结算层（这一层曾经因为 E.other 没导出而崩溃）
 if ($FlagWaitSeconds -gt 0) {
   Write-Output ("[5/5] 等 {0} 秒让一方超时（验证结算层）" -f $FlagWaitSeconds)
   Start-Sleep -Seconds $FlagWaitSeconds
-  $wr = New-Object ClockInput+RECT
-  [void][ClockInput]::GetWindowRect($h, [ref]$wr)
-  $bw = $wr.Right - $wr.Left
-  $bh = $wr.Bottom - $wr.Top
-  Add-Type -AssemblyName System.Drawing
-  $bmp = New-Object System.Drawing.Bitmap $bw, $bh
-  $gr = [System.Drawing.Graphics]::FromImage($bmp)
-  $gr.CopyFromScreen($wr.Left, $wr.Top, 0, 0, $bmp.Size)
-  $shot = Join-Path $root 'tests\screenshots\overlay.png'
-  $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
-  $gr.Dispose(); $bmp.Dispose()
-  Write-Output ("  已截图: {0}  ({1}x{2})" -f $shot, $bw, $bh)
+  Save-Shot 'overlay.png'
 }
 
 Start-Sleep -Milliseconds 800
@@ -257,13 +331,16 @@ $text = $lines -join "`n"
 
 Write-Output ''
 Write-Output "--- 关键日志（$logFile）---"
-$lines | Select-String -Pattern 'DBG menu (mode|name|select|start)|clock screen ready|DBG clock press|ERROR:SCRIPT' |
+$lines | Select-String -Pattern 'DBG menu (mode|preset|start)|clock screen ready|DBG clock (press|pause|swap|facing)|ERROR:SCRIPT' |
   Select-Object -First 25 | ForEach-Object { Write-Output $_ }
 
 $checks = [ordered]@{
-  '按钮响应（mode=sudden）'                = ($text -match 'DBG menu mode sudden')
-  '面板点击生效（走了一步）'               = ($text -match 'DBG clock press .*result=move')
-  '运行期没有脚本错误'                     = -not ($text -match 'ERROR:SCRIPT')
+  '按钮响应（mode=sudden）'                  = ($text -match 'DBG menu mode sudden')
+  '拍对侧开表（黑方 → 白方的钟开始走）'      = ($text -match 'DBG clock press side=b target=w result=start')
+  '面板点击生效（白方走了一步）'             = ($text -match 'DBG clock press side=w target=w result=move')
+  '交换两侧生效'                            = ($text -match 'DBG clock swap swapped=true')
+  '暂停 / 继续生效（P ↔ C）'                 = (($text -match 'DBG clock pause paused=true') -and ($text -match 'DBG clock pause paused=false'))
+  '运行期没有脚本错误'                       = -not ($text -match 'ERROR:SCRIPT')
 }
 if ($FlagWaitSeconds -gt 0) {
   $checks['超时结算层出现（历史上这里崩过 E.other）'] = ($text -match 'DBG clock flag loser=')

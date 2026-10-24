@@ -33,7 +33,9 @@ if (-not (Test-Path $chrome)) { $chrome = 'C:\Program Files (x86)\Microsoft\Edge
 if (-not (Test-Path $chrome)) { throw '未找到 Chrome / Edge' }
 
 $jobs = @(
-  @{ name = 'setup';             scene = 'setup';    w = 390; h = 844; budget = 2000 },
+  @{ name = 'setup';             scene = 'setup';    w = 390; h = 844; budget = 2000 }
+  # 「怎么用」单独一页（设置页底部点进去）
+  @{ name = 'help';              scene = 'help';     w = 390; h = 844; budget = 2500 },
   # 刚进入棋钟页、尚未开局：核对「没有开始按钮」（要拍面板才会开表）
   @{ name = 'ready';             scene = 'ready';    w = 390; h = 844; budget = 2000 },
   @{ name = 'midgame-portrait';  scene = 'midgame';  w = 390; h = 844; budget = 8000 },

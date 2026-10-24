@@ -1,7 +1,7 @@
 --[[
   engine_spec.lua — 计时引擎单元测试（纯 Lua，不依赖 Defold）
   ==================================================================
-  与网页版 tests/engine.test.js 一一对应的 30 个用例，用来证明这次
+  与网页版 tests/engine.test.js 一一对应的 31 个用例，用来证明这次
   JavaScript → Lua 的移植没有改变任何计时语义。
 
   运行（任意 Lua 5.1+ 解释器）：
@@ -417,9 +417,43 @@ test("byoyomi: config clamping and description", function()
   local single = E.normalizeConfig({
     mode = "byoyomi", baseMs = 300000, byoyomiMs = 0, byoyomiPeriods = 0,
   })
-  eq(single.byoyomiMs, E.MIN_BYOYOMI_MS, "0 s byoyomi clamps to the minimum")
+  -- 读秒 0 秒是合法值：意思是「没有读秒」（只剩主时间），不再夹到 1 秒
+  eq(single.byoyomiMs, 0, "0 s byoyomi means no byoyomi")
   eq(single.byoyomiPeriods, 1)
-  eq(E.describeConfig(single), "5 min + byoyomi 1s - Byoyomi")
+  eq(E.describeConfig(single), "5 min (no byoyomi) - Byoyomi")
+end)
+
+test("byoyomi: 0 main time = pure byoyomi, 0 s byoyomi = main time only (never both 0)", function()
+  -- 纯读秒：主时间 0，钟上从第一手起就是读秒那一格
+  local pure = game({ mode = "byoyomi", baseMs = 0, byoyomiMs = 20000, byoyomiPeriods = 3 })
+  eq(pure.left("w"), 0)
+  local idle = E.readout(pure.state, "w", pure.now())
+  eq(idle.phase, "byoyomi")
+  eq(idle.ms, 20000, "idle clock shows one full byoyomi window")
+  eq(idle.periodsLeft, 3)
+  pure.start("w")
+  pure.at(18000)
+  eq(E.readout(pure.state, "w", pure.now()).ms, 2000)
+  local r1 = pure.press("w")
+  eq(r1.type, "move")
+  eq(pure.state.periods.w, 3, "no overrun yet, so no period is consumed")
+  pure.at(61000)                       -- 61 s = 3 full windows
+  eq(pure.flag(), "b", "pure byoyomi still loses on the periods")
+  eq(pure.state.periods.b, 0)
+
+  -- 只有主时间：读秒 0 秒，用完即负
+  local mainOnly = game({ mode = "byoyomi", baseMs = 60000, byoyomiMs = 0, byoyomiPeriods = 3 })
+  mainOnly.start("w")
+  mainOnly.at(59000)
+  eq(E.readout(mainOnly.state, "w", mainOnly.now()).phase, "main")
+  eq(mainOnly.flag(), nil)
+  mainOnly.at(2000)
+  eq(mainOnly.flag(), "w", "no byoyomi means the flag falls with the main time")
+
+  -- 两个都是 0：没有意义，回落到 1 分钟主时间
+  local none = E.normalizeConfig({ mode = "byoyomi", baseMs = 0, byoyomiMs = 0 })
+  eq(none.baseMs, 60000, "both zero falls back to 1 minute")
+  eq(none.byoyomiMs, 0)
 end)
 
 test("readout: non-byoyomi modes always report the main phase", function()

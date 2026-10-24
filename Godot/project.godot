@@ -1,0 +1,37 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="CoQ Chess & Weiqi Clock"
+config/description="A board-game clock for chess and Weiqi (Go): Fischer increment / Bronstein delay / Byoyomi / sudden death. Godot port of the HTML5 version."
+config/version="1.0.0"
+run/main_scene="res://ui/main.tscn"
+config/features=PackedStringArray("4.5", "GL Compatibility")
+boot_splash/bg_color=Color(0.039, 0.051, 0.071, 1)
+boot_splash/show_image=false
+config/icon="res://assets/icon.png"
+
+[display]
+
+window/size/viewport_width=390
+window/size/viewport_height=844
+window/size/window_width_override=430
+window/size/window_height_override=932
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=6
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.039, 0.051, 0.071, 1)

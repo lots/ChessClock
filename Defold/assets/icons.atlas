@@ -1,0 +1,13 @@
+images {
+  image: "/assets/icons/sound_on.png"
+}
+images {
+  image: "/assets/icons/sound_off.png"
+}
+images {
+  image: "/assets/icons/swap.png"
+}
+images {
+  image: "/assets/icons/settings.png"
+}
+extrude_borders: 2

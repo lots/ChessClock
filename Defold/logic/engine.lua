@@ -46,6 +46,8 @@ M.SIDES            = { "w", "b" }
 M.MIN_BASE_MS    = 1000
 M.MAX_BASE_MS    = 6 * 60 * 60 * 1000
 M.MAX_ADD_MS     = 180 * 1000
+-- 读秒**不为 0** 时的最小粒度。0 是合法值，含义是「没有读秒」（只剩主时间，用完即负），
+-- 所以用法是「> 0 时不得小于 1 秒」，而不是「不得小于 1 秒」。
 M.MIN_BYOYOMI_MS = 1000
 M.MAX_PERIODS    = 20
 
@@ -97,7 +99,9 @@ function M.normalizeConfig(config)
     mode = config.mode
   end
 
-  local baseMs = clampInt(config.baseMs, M.MIN_BASE_MS, M.MAX_BASE_MS, 5 * 60000)
+  -- 主时间可以给 0（读秒模式下的「纯读秒」），但**非零时必须 ≥ 1 秒**
+  local baseMs = clampInt(config.baseMs, 0, M.MAX_BASE_MS, 5 * 60000)
+  if baseMs > 0 and baseMs < M.MIN_BASE_MS then baseMs = M.MIN_BASE_MS end
 
   -- 按模式优先取对应字段（规范化后的 byoyomi 配置里 incMs 恒为 0）
   local rawAdd
@@ -127,8 +131,20 @@ function M.normalizeConfig(config)
   elseif mode == M.MODES.DELAY then
     cfg.delayMs = addMs
   elseif mode == M.MODES.BYOYOMI then
-    cfg.byoyomiMs = math.max(M.MIN_BYOYOMI_MS, addMs)
+    -- 读秒模式的两个数各可以是 0，但不能同时是 0：
+    --   主时间 0 + 读秒 N 秒   = 纯读秒（每一手都从读秒那一格开始）
+    --   主时间 M 分 + 读秒 0 秒 = 只有主时间（用完即负，等价于包干制）
+    --   两个都 0 = 什么都不剩，没有意义 → 回落到 1 分钟主时间
+    cfg.byoyomiMs = addMs
+    if cfg.byoyomiMs > 0 and cfg.byoyomiMs < M.MIN_BYOYOMI_MS then
+      cfg.byoyomiMs = M.MIN_BYOYOMI_MS
+    end
+    if cfg.baseMs <= 0 and cfg.byoyomiMs <= 0 then cfg.baseMs = 60000 end
     cfg.byoyomiPeriods = periods
+  end
+  if mode ~= M.MODES.BYOYOMI and cfg.baseMs < M.MIN_BASE_MS then
+    -- 其它模式没有「另一个数」兜底，主时间必须 ≥ 1 秒
+    cfg.baseMs = M.MIN_BASE_MS
   end
   return cfg
 end
@@ -199,6 +215,16 @@ function M.byoyomiState(state, side, now)
   local x = cfg.byoyomiMs
   local periods = state.periods[side]
 
+  -- 读秒 0 秒 = 没有读秒：整局只算主时间，用完即负（与包干制一样）
+  if x <= 0 then
+    return {
+      phase = "main",
+      ms = M.remainingMs(state, side, now),
+      periodsLeft = 0,
+      windowIndex = 0,
+    }
+  end
+
   if state.finished and state.flagged == side then
     return { phase = "byoyomi", ms = 0, periodsLeft = 0, windowIndex = 0 }
   end
@@ -264,6 +290,10 @@ end
 --- 这一手是否已经用光时间（读秒看段数，其它模式看主时间）
 function M.isOutOfTime(state, side, now)
   if state.cfg.mode == M.MODES.BYOYOMI then
+    -- 没有读秒（0 秒）时判负依据是主时间，和包干制一样
+    if state.cfg.byoyomiMs <= 0 then
+      return M.remainingMs(state, side, now) <= 0
+    end
     local info = M.byoyomiState(state, side, now)
     return info.phase == "byoyomi" and info.periodsLeft <= 0
   end
@@ -416,11 +446,21 @@ function M.describeConfig(config)
   end
 
   if cfg.mode == M.MODES.BYOYOMI then
-    local txt = base .. " + byoyomi " .. secs(cfg.byoyomiMs) .. "s"
-    if cfg.byoyomiPeriods > 1 then
-      txt = txt .. " x" .. cfg.byoyomiPeriods
+    -- 主时间 0 → 纯读秒（不再说 "0 min + ..."）；读秒 0 → 只有主时间
+    local byo = ""
+    if cfg.byoyomiMs > 0 then
+      byo = "byoyomi " .. secs(cfg.byoyomiMs) .. "s"
+      if cfg.byoyomiPeriods > 1 then
+        byo = byo .. " x" .. cfg.byoyomiPeriods
+      end
     end
-    return txt .. " - " .. M.MODE_LABELS[cfg.mode]
+    if cfg.baseMs <= 0 then
+      return byo .. " (no main time) - " .. M.MODE_LABELS[cfg.mode]
+    end
+    if cfg.byoyomiMs <= 0 then
+      return base .. " (no byoyomi) - " .. M.MODE_LABELS[cfg.mode]
+    end
+    return base .. " + " .. byo .. " - " .. M.MODE_LABELS[cfg.mode]
   end
 
   local add = cfg.delayMs

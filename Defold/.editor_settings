@@ -6,16 +6,20 @@
   :workflow {
     :open-tabs [
       [
-        [
-          "/README.md"
-          :html
-        ]
       ]
     ]
     :recent-files [
       [
+        "/assets/fonts/ui.font"
+        :scene
+      ]
+      [
         "/README.md"
         :html
+      ]
+      [
+        "/assets/fonts/clock.font"
+        :scene
       ]
     ]
   }

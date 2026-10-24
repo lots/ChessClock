@@ -14,6 +14,7 @@
 ]]
 
 local settings = require("logic.settings")
+local theme = require("logic.theme")
 local E = require("logic.engine")
 
 function init(self)
@@ -22,8 +23,54 @@ function init(self)
   -- 顺带打印计时源，os.time 只有 1 秒精度，看到它说明 LuaSocket 没加载上。
   -- 名字从工程配置取，改名不用来这里改（界面里的中文名在 logic/text.lua）。
   print(sys.get_config_string("project.title", "CoQ Chess Clock") .. " started - mode=" .. self.cfg.mode ..
-    " base=" .. self.cfg.baseMin .. "min add=" .. self.cfg.addSec ..
-    "s - clock=" .. tostring(E.TIME_SOURCE))
+    " base=" .. self.cfg.baseMin .. "min add=" .. self.cfg.addSec .. "s" ..
+    " sound=" .. (self.cfg.sound and "on" or "off") ..
+    " facing=" .. (self.cfg.facing and "on" or "off") ..
+    " swapped=" .. (self.cfg.swapped and "on" or "off") ..
+    " theme=" .. tostring(self.cfg.theme) ..
+    " - clock=" .. tostring(E.TIME_SOURCE))
+
+  --[[ 演示 / 自动化测试用的覆盖开关，**必须在把设置发给界面之前**处理，
+       否则界面拿到的是存档里的旧设置（踩过：demo_theme 改了主题，
+       设置页却已经用旧主题建好了节点）。 ]]
+
+  -- 测试/演示用：忽略存档、回到首次启动的默认设置（并立刻写回）
+  --   打包产物：CoQ棋钟Defold.exe --config=chessclock.reset_settings=1
+  -- 自动化测试用它保证「上一轮留下的选择」（尤其是 swapped）不会带进这一轮。
+  if sys.get_config_int("chessclock.reset_settings", 0) == 1 then
+    self.cfg = settings.sanitize(nil)
+    settings.save(self.cfg)
+    print("settings reset to defaults - mode=" .. self.cfg.mode ..
+      " base=" .. self.cfg.baseMin .. "min add=" .. self.cfg.addSec ..
+      "s theme=" .. self.cfg.theme)
+  end
+
+  -- 截图/演示用：指定界面主题（light / medium / dark）
+  --   打包产物：--config=chessclock.demo_theme=light
+  local demo_theme = sys.get_config_string("chessclock.demo_theme", "")
+  if demo_theme ~= "" then
+    self.cfg.theme = theme.normalize(demo_theme)
+    settings.save(self.cfg)
+    print("demo_theme -> " .. tostring(self.cfg.theme))
+  end
+
+  -- 截图/演示用：把时间调成 1 分钟无加秒（验证超时结算层时不用等 10 分钟）
+  --   打包产物：--config=chessclock.autostart=1 --config=chessclock.demo_quick=1
+  if sys.get_config_int("chessclock.demo_quick", 0) == 1 then
+    self.cfg = settings.sanitize({
+      mode = "sudden", baseMin = 1, addSec = 0, periods = 1, theme = self.cfg.theme,
+      sound = self.cfg.sound, facing = self.cfg.facing, swapped = self.cfg.swapped,
+    })
+    settings.save(self.cfg)
+  end
+
+  -- 截图/演示用：打开「交换两侧」再进棋钟界面（验证「旋转跟着视觉上第一块」）
+  --   打包产物：CoQ棋钟Defold.exe --config=chessclock.autostart=1 --config=chessclock.demo_swapped=1
+  if sys.get_config_int("chessclock.demo_swapped", 0) == 1 then
+    self.cfg.swapped = true
+    self.cfg.facing = true
+    settings.save(self.cfg)
+  end
 
   -- 关键：把输入焦点给「整个 game object」。Defold 的 acquire_input_focus 是发给
   -- 游戏对象的（不是发给某个组件），它会把该对象下所有能接收输入的组件
@@ -35,22 +82,56 @@ function init(self)
   msg.post("#gui_clock", "disable")
   msg.post("#gui_menu", "settings", { config = self.cfg })
 
+  --[[ 声音自检：--config=chessclock.test_sound=1
+       依次播放三份音效（每 1.2 秒一个），并在日志里打一行。
+       用途：快速确认「引擎 → 系统输出」这条链路上有没有声音（换机器 / 排查无声时用）。 ]]
+  if sys.get_config_int("chessclock.test_sound", 0) == 1 then
+    self.sound_test = { { id = "#sfx_click", name = "click" },
+                        { id = "#sfx_tick",  name = "tick" },
+                        { id = "#sfx_alarm", name = "alarm" } }
+    self.sound_test_i = 0
+    self.sound_test_wait = 0.4
+    print("sound self-test: click / tick / alarm (1.2 s apart)")
+  end
+
   -- 调试/展示/冒烟测试用：启动就直接进棋钟界面（跳过设置页）
   --   打包产物直接跑：CoQ棋钟Defold.exe --config=chessclock.autostart=1
   if sys.get_config_int("chessclock.autostart", 0) == 1 then
     msg.post("#main", "start_game", { config = self.cfg })
   end
 
-  -- 输入调试（--config=chessclock.debug_input=1）：把窗口焦点变化也打进日志，
-  -- 用来区分「点击没送到窗口」和「界面收不到输入」这两种情况。
-  if sys.get_config_int("chessclock.debug_input", 0) == 1 then
-    self.debug_input = true
-    local w, h = window.get_size()
-    print("DBG window size=" .. w .. "x" .. h)
-    window.set_listener(function(_, event)
+  local debug_input = (sys.get_config_int("chessclock.debug_input", 0) == 1)
+  self.debug_input = debug_input
+
+  --[[ 窗口尺寸变化 → 让两个界面重新排版。
+
+       Defold 不会自动把 window 事件转成组件消息，所以这里用 window.set_listener
+       接住 resized 再自己转发 —— 否则 on_message 里的 "window_resized" 分支是死代码
+       （实测：窗口被改成别的尺寸后，界面还拿着旧尺寸算出来的坐标；
+       截图看着没问题（投影会缩放），但 gui.get_screen_position 与命中判定的
+       参照尺寸已经过期，自动化测试就会点到错的地方）。
+
+       两个坑：
+       1) window 回调里不能直接 msg.post，所以只在回调里记标记，下一帧 update 里再转发；
+       2) 消息名**不能**用 "window_resized" —— 那是引擎内置的 DDF 消息（带 width/height/
+          display_profile 等必填字段），空表发出去会报 "Field %s not specified in table"。
+          这里用我们自己的消息名 "relayout"。 ]]
+  self.pending_resize = false
+  window.set_listener(function(_, event)
+    if debug_input then
       print("DBG window event=" .. tostring(event) ..
         " (1=gained focus, 2=lost focus, 3=resized, 4=iconified, 5=deiconified)")
-    end)
+    end
+    if event == window.WINDOW_EVENT_RESIZED then
+      self.pending_resize = true
+    end
+  end)
+
+  -- 输入调试（--config=chessclock.debug_input=1）：把窗口焦点变化也打进日志，
+  -- 用来区分「点击没送到窗口」和「界面收不到输入」这两种情况。
+  if debug_input then
+    local w, h = window.get_size()
+    print("DBG window size=" .. w .. "x" .. h)
     -- 让总控脚本也抢一次输入焦点：如果连它都收不到 action，说明问题在输入绑定/窗口层，
     -- 而不是 GUI 组件本身。
     msg.post(".", "acquire_input_focus")
@@ -68,6 +149,26 @@ local ACTION_NAMES = {
   [hash("key_f")] = "key_f",
   [hash("key_esc")] = "key_esc",
 }
+
+function update(self, dt)
+  -- 声音自检（见 init）：三份音效依次播一遍
+  if self.sound_test and self.sound_test_i < #self.sound_test then
+    self.sound_test_wait = self.sound_test_wait - dt
+    if self.sound_test_wait <= 0 then
+      local s = self.sound_test[self.sound_test_i + 1]
+      msg.post(s.id, "play")
+      print("DBG sound test " .. s.name)
+      self.sound_test_i = self.sound_test_i + 1
+      self.sound_test_wait = 1.2
+    end
+  end
+
+  if self.pending_resize then
+    self.pending_resize = false
+    msg.post("#gui_menu", "relayout")
+    msg.post("#gui_clock", "relayout")
+  end
+end
 
 function on_input(self, action_id, action)
   if self.debug_input then
@@ -97,5 +198,12 @@ function on_message(self, message_id, message, sender)
   elseif message_id == hash("save_settings") then
     self.cfg = settings.sanitize(message.config)
     settings.save(self.cfg)
+
+  elseif message_id == hash("theme_changed") then
+    -- 设置页换了主题：存盘 + 通知两个界面各自重建（它们的 Lua 状态与节点都是各自的）
+    self.cfg.theme = theme.normalize(message.theme)
+    settings.save(self.cfg)
+    msg.post("#gui_menu", "theme", { theme = self.cfg.theme })
+    msg.post("#gui_clock", "theme", { theme = self.cfg.theme })
   end
 end

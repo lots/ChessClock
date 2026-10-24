@@ -4,10 +4,13 @@
  *
  *     node tests/run.js
  *
- * 做两件事：
- *   1) 跑 tests/project_spec.js：资源引用、GUI 字体/贴图名、JS↔Lua 常量一致性等静态校验；
- *   2) 如果本机装了 Lua 5.1+（或 LuaJIT），再跑一遍 logic/engine_spec.lua ——
- *      那是与网页版一一对应的 30 个计时用例。没有 Lua 就跳过并提示。
+ * 做三件事：
+ *   1) 跑 tests/project_spec.js：资源引用、GUI 字体/贴图名、字符是否有字形、
+ *      图标资源、JS↔Lua 常量与预设/默认值一致性等静态校验；
+ *   2) 如果本机装了 Lua 5.1+（或 LuaJIT），跑 logic/engine_spec.lua ——
+ *      那是与网页版一一对应的 30 个计时用例；
+ *   3) 再跑 tests/settings_spec.lua —— 默认值与旧存档迁移的用例。
+ *   没有 Lua 就跳过 2、3 并提示。
  *
  * 更强的验证（需要本机装有 Defold）：
  *     powershell -ExecutionPolicy Bypass -File tools/build_and_run.ps1
@@ -52,5 +55,13 @@ if (!lua) {
   test('Lua 计时引擎单测（logic/engine_spec.lua，与网页版同一套 30 个用例）', () => {
     assert.equal(res.status, 0, 'Lua 单测未通过（见上方输出）');
     assert.ok(fs.existsSync(spec), '缺少 logic/engine_spec.lua');
+  });
+
+  // ---------- 3. 设置模块单测（默认值 / 旧存档迁移） ----------
+  const sspec = path.join(ROOT, 'tests', 'settings_spec.lua');
+  const sres = spawnSync(lua, [sspec], { stdio: 'inherit', cwd: ROOT });
+  test('Lua 设置模块单测（tests/settings_spec.lua：默认值 + 旧存档迁移）', () => {
+    assert.equal(sres.status, 0, '设置模块单测未通过（见上方输出）');
+    assert.ok(fs.existsSync(sspec), '缺少 tests/settings_spec.lua');
   });
 }

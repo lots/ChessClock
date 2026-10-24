@@ -1,9 +1,20 @@
 --[[
-  menu.gui_script — 设置界面
+  menu.gui_script — 设置界面 + 「怎么用」页
   ==================================================================
   零第三方依赖：按钮就是 logic/ui.lua 动态创建的两个节点（色块 + 文字），
   命中判定统一走 ui.pick → gui.pick_node（它自己处理坐标空间与缩放，
   比自己算矩形可靠；disabled 的节点天然不可点）。
+
+  与网页版设置页一致的两条规则：
+    · 时间预设按当前模式换一套（棋类 11 档 / 读秒 8 档，见 PRESETS_*）；
+    · 从别的模式第一次切进 Byoyomi、且当前数字不是那 8 档之一时，
+      自动套用 10+3×20（seed_byoyomi_default）。
+
+  与网页版对齐、但实现方式不同的两处（Defold 没有现成的下拉框控件）：
+    · 「2. 时间控制」的预设是**下拉框**：一颗按钮（显示当前档位）
+      + 点开后铺一层浮层列表（self.preset_open），最后一档是「自定义」；
+    · 「怎么用」是**单独一页**：self.page = "setup" | "help"，
+      切页时整屏重建（节点颜色/文字都是建的时候写死的，重建最省事）。
 
   输入动作名与 input/game.input_binding 一一对应：
     press（鼠标）/ touch_multi（触摸）→ 指针按下
@@ -14,17 +25,44 @@ local ui = require("logic.ui")
 local text = require("logic.text")
 local settings = require("logic.settings")
 local E = require("logic.engine")
+local theme = require("logic.theme")
 
 local MODES = { "fischer", "delay", "byoyomi", "sudden" }
 
-local PRESETS = {
-  { baseMin = 1,  addSec = 0 },
-  { baseMin = 3,  addSec = 2 },
-  { baseMin = 5,  addSec = 3 },
-  { baseMin = 10, addSec = 5 },
-  { baseMin = 15, addSec = 10 },
-  { baseMin = 60, addSec = 30 },
+--[[ 常用制式：与网页版 app.js 的 PRESETS_CHESS / PRESETS_BYOYOMI 一一对应
+     （tests/project_spec.js 会逐档比对，防止两个版本各改各的）。
+
+     读秒（围棋）的记法沿用围棋习惯：基础时间 + 段数 × 每手秒数，
+     例如 10+3×20 = 主时间 10 分钟；主时间用完后每手 20 秒、共 3 段。 ]]
+local PRESETS_CHESS = {
+  { baseMin = 1,  addSec = 0 },      -- 1+0   子弹
+  { baseMin = 3,  addSec = 2 },      -- 3+2   超快棋
+  { baseMin = 5,  addSec = 0 },      -- 5+0   快棋
+  { baseMin = 5,  addSec = 3 },      -- 5+3   快棋
+  { baseMin = 10, addSec = 0 },      -- 10+0  快棋
+  { baseMin = 10, addSec = 5 },      -- 10+5  快棋
+  { baseMin = 15, addSec = 10 },     -- 15+10 快棋
+  { baseMin = 25, addSec = 10 },     -- 25+10 慢棋
+  { baseMin = 30, addSec = 0 },      -- 30+0  慢棋
+  { baseMin = 60, addSec = 30 },     -- 60+30 慢棋
+  { baseMin = 90, addSec = 30 },     -- 90+30 慢棋
 }
+
+local PRESETS_BYOYOMI = {
+  { baseMin = 5,  addSec = 20, periods = 3 },   -- 5+3×20
+  { baseMin = 10, addSec = 20, periods = 3 },   -- 10+3×20（默认制式）
+  { baseMin = 10, addSec = 30, periods = 3 },   -- 10+3×30
+  { baseMin = 15, addSec = 30, periods = 3 },   -- 15+3×30
+  { baseMin = 20, addSec = 30, periods = 5 },   -- 20+5×30
+  { baseMin = 30, addSec = 30, periods = 5 },   -- 30+5×30
+  { baseMin = 30, addSec = 60, periods = 3 },   -- 30+3×60
+  { baseMin = 60, addSec = 60, periods = 5 },   -- 60+5×60
+}
+
+local PRESET_SLOTS = #PRESETS_CHESS        -- 11 个入口；读秒只有 8 档，多的禁用
+local PRESET_BOX_H = 62                    -- 下拉框本身的高度
+local PRESET_OPT_H = 56                    -- 浮层里每一档的高度
+local PRESET_OPT_GAP = 6
 
 local MODE_TEXT = {
   fischer = "m_fischer",
@@ -37,7 +75,6 @@ local PAD = 24
 local GAP = 12
 local ROW_H = 62
 local BTN_H = 64
-local PRESET_H = 54
 
 -- 输入调试开关：打包产物用 --config=chessclock.debug_input=1 打开
 local DEBUG_INPUT = (sys.get_config_int("chessclock.debug_input", 0) == 1)
@@ -48,7 +85,53 @@ local function dbg(...)
   if DEBUG_INPUT then print("DBG menu " .. table.concat({ ... }, " ")) end
 end
 
-local layout, refresh, save   -- 前置声明
+local layout, refresh, save, rebuild   -- 前置声明
+
+-- ===================== 预设 =====================
+
+--- 当前模式下该显示哪一组预设
+local function presets_for(mode)
+  if mode == "byoyomi" then return PRESETS_BYOYOMI end
+  return PRESETS_CHESS
+end
+
+--- 预设的主记法：10+5 / 10+3×20
+local function preset_label(p)
+  if p.periods then
+    return p.baseMin .. "+" .. p.periods .. "×" .. p.addSec
+  end
+  return p.baseMin .. "+" .. p.addSec
+end
+
+--- 当前数字正好是第几档（0 = 对不上任何一档 = 「自定义」）
+local function preset_index(self)
+  for i, p in ipairs(presets_for(self.cfg.mode)) do
+    if p.baseMin == self.cfg.baseMin and p.addSec == self.cfg.addSec
+      and (p.periods == nil or p.periods == self.cfg.periods) then
+      return i
+    end
+  end
+  return 0
+end
+
+--[[ 从别的模式第一次切进 Byoyomi 时，给一组像样的默认值 10+3×20。
+
+     模式按钮只改 cfg.mode，三个数字会从上一个模式继承下来（比如 Fischer 的
+     5+3 到了读秒就变成 5 分钟 + 每手 3 秒 × 3 段，很怪）。所以这里兜一层：
+       · 当前数字**已经是**那 8 档之一 → 是用户自己挑的，原样保留；
+       · 不是 → 回落到 Byoyomi 默认 10+3×20。
+     只在「模式从非 Byoyomi 变成 Byoyomi」时调用；启动时恢复存档不走这里。 ]]
+local function seed_byoyomi_default(cfg)
+  for _, p in ipairs(PRESETS_BYOYOMI) do
+    if p.baseMin == cfg.baseMin and p.addSec == cfg.addSec and p.periods == cfg.periods then
+      return false
+    end
+  end
+  cfg.baseMin = 10
+  cfg.addSec = 20
+  cfg.periods = 3
+  return true
+end
 
 -- ===================== 建节点 =====================
 
@@ -57,7 +140,18 @@ local function make_button(self, id, label, box_color, text_color, size)
   return ui.make_button(self.buttons, id, label, nil, box_color, text_color, size)
 end
 
-local function build(self)
+--- 把节点挪到屏幕外（空间有限，Defold GUI 没有「隐藏」这个开关）
+local function park(node)
+  gui.set_position(node, vmath.vector3(-4000, -4000, 0))
+end
+
+local function park_button(b)
+  park(b.box)
+  park(b.label)
+end
+
+--- 设置页正文（page == "setup"）
+local function build_setup(self)
   self.nodes.logo = ui.texture("logo", 0, 0, 96, hash("logo"))
   self.nodes.title = ui.text("title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34,
     text.t("title"), ui.C.fg)
@@ -73,7 +167,7 @@ local function build(self)
       ui.C.card2, ui.C.fg, 20)
   end
 
-  -- 2. 时间
+  -- 2. 时间：三个步进器 + 预设下拉框
   self.nodes.time_label = ui.text("time_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
     text.t("timing"), ui.C.accent)
 
@@ -81,7 +175,7 @@ local function build(self)
   local function stepper(id, get, set, step)
     local row = {
       id = id,
-      label = ui.text(id .. "_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted),
+      label = ui.text(id .. "_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 16, "", ui.C.muted),
       minus = make_button(self, id .. "_minus", "-", ui.C.card2, ui.C.fg, 28),
       plus = make_button(self, id .. "_plus", "+", ui.C.card2, ui.C.fg, 28),
       value = ui.text(id .. "_value", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30, "", ui.C.fg),
@@ -91,52 +185,110 @@ local function build(self)
     return row
   end
 
+  -- 下限：主时间 / 读秒秒数可以到 0（读秒模式下二者各可为 0），段数至少 1
   rows.base = stepper("base", function() return self.cfg.baseMin end,
-    function(v) self.cfg.baseMin = v end, 1)
+    function(v) self.cfg.baseMin = math.max(0, v) end, 1)
   rows.add = stepper("add", function() return self.cfg.addSec end,
-    function(v) self.cfg.addSec = v end, 1)
+    function(v) self.cfg.addSec = math.max(0, v) end, 1)
   rows.seg = stepper("seg", function() return self.cfg.periods end,
-    function(v) self.cfg.periods = v end, 1)
+    function(v) self.cfg.periods = math.max(1, v) end, 1)
   self.rows = rows
 
-  -- 预设
+  -- 预设下拉框：一颗按钮显示当前档位，点开是浮层列表（浮层节点在 build 末尾建，保证画在最上面）
   self.nodes.preset_label = ui.text("preset_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
     text.t("presets"), ui.C.accent)
-  self.preset_buttons = {}
-  for i, p in ipairs(PRESETS) do
-    self.preset_buttons[i] = make_button(self, "preset_" .. i, p.baseMin .. "+" .. p.addSec,
-      ui.C.card2, ui.C.fg, 21)
-  end
+  self.preset_select = make_button(self, "preset_select", "", ui.C.card2, ui.C.fg, 21)
 
   -- 声音
   self.nodes.sound_label = ui.text("sound_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
     text.t("sound"), ui.C.accent)
-  self.sound_button = make_button(self, "sound", "", ui.C.accent, ui.C.bg, 20)
+  self.sound_button = make_button(self, "sound", "", ui.C.accent, ui.C.accent_ink, 20)
+
+  -- 界面主题（与网页版设置页的「界面主题」下拉框一致：浅色 / 中性 / 深色）
+  self.nodes.theme_label = ui.text("theme_label", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 20,
+    text.t("theme"), ui.C.accent)
+  self.theme_buttons = {}
+  for _, name in ipairs(theme.ORDER) do
+    self.theme_buttons[name] = make_button(self, "theme_" .. name, text.t("theme_" .. name),
+      ui.C.card2, ui.C.fg, 18)
+  end
+
+  -- 「怎么用」入口（内容在另一页）：整行一颗按钮
+  self.help_link = make_button(self, "help_link", text.t("how") .. "  >", ui.C.card2, ui.C.fg, 20)
 
   self.nodes.summary = ui.text("summary", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted)
-  self.start_button = make_button(self, "start", text.t("start"), ui.C.ok, ui.C.bg, 30)
+  self.start_button = make_button(self, "start", text.t("start"), ui.C.ok, ui.C.ok_ink, 30)
+
+  -- ---- 浮层：遮罩 + 每一档一行（最后建 = 画在最上面） ----
+  self.nodes.popup_bg = ui.box("popup_bg", ui.rect(0, 0, 10, 10),
+    { ui.C.bg[1], ui.C.bg[2], ui.C.bg[3], 0.92 })
+  gui.set_enabled(self.nodes.popup_bg, false)
+  self.preset_options = {}
+  for i = 1, PRESET_SLOTS + 1 do
+    local b = make_button(self, "preset_opt_" .. i, "", ui.C.card2, ui.C.fg, 19)
+    b.kind = "option"
+    ui.enable_button(b, false)
+    self.preset_options[i] = b
+  end
+end
+
+--- 「怎么用」页正文（page == "help"）
+local function build_help(self)
+  self.nodes.help_title = ui.text("help_title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30,
+    text.t("how"), ui.C.accent)
+  self.nodes.help_hint1 = ui.text("help_hint1", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 15,
+    text.t("how_start_1"), ui.C.fg)
+  self.nodes.help_hint2 = ui.text("help_hint2", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 15,
+    text.t("how_start_2"), ui.C.fg)
+  self.help_back = make_button(self, "help_back", text.t("back"), ui.C.card2, ui.C.fg, 22)
+end
+
+local function build(self)
+  ui.bind(self)          -- 之后建的节点都记在这个界面名下（换主题整屏重建时要按界面删）
+  self.theme = ui.theme_name()   -- 记住「这套节点是用哪个主题建的」
+  if DEBUG_INPUT then print("DBG menu build theme=" .. tostring(self.theme)
+    .. " page=" .. tostring(self.page)) end
+  -- 页面底色：铺满全屏、最先建（永远在最底层）；换主题时跟着变
+  self.nodes.backdrop = ui.backdrop("bg", ui.C.bg)
+  if self.page == "help" then
+    build_help(self)
+  else
+    build_setup(self)
+  end
+end
+
+--[[ 切到目标主题（共享的 ui.C 会被改成它），返回「这个界面是否需要重建」。
+     详见 clock.gui_script 里的同名函数：节点颜色是建的时候写死的，
+     所以「全局调色板变没变」不等于「这个界面的节点是不是新主题」。 ]]
+local function use_theme(self, name)
+  local want = theme.normalize(name)
+  local need = (self.theme ~= want)
+  ui.set_theme(want)
+  return need
 end
 
 -- ===================== 布局 =====================
 
-local function content_height(self)
+local function setup_height(self)
   return 118                                   -- 顶部 logo（96）+ 标题
     + 32 + 2 * BTN_H + GAP + 20                -- 模式
-    + 32 + 3 * (ROW_H + 10)                    -- 时间步进器
-    + 12
-    + 20
-    + 32 + 2 * PRESET_H + GAP + 20             -- 预设
+    + 32 + 3 * (ROW_H + 10) + 12 + 20          -- 时间步进器
+    + 32 + PRESET_BOX_H + 20                   -- 预设下拉框
     + 56 + 20                                  -- 声音
+    + 56 + 20                                  -- 界面主题
+    + 56 + 20                                  -- 「怎么用」入口
     + 40                                       -- 摘要
     + 24 + 92                                  -- 开始按钮
 end
 
-function layout(self)
+local function layout_setup(self)
   local w, h = ui.screen()
   local inner = w - PAD * 2
-  local total = content_height(self)
+  local total = setup_height(self)
   local y = math.max(PAD, (h - total) * 0.5)
-  self.start_rect_top = nil
+
+  gui.set_position(self.nodes.backdrop, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.nodes.backdrop, vmath.vector3(w, h, 0))
 
   local function place_button(b, r)
     b.rect = r
@@ -172,7 +324,7 @@ function layout(self)
   y = y + 32
   for _, row in ipairs({ self.rows.base, self.rows.add, self.rows.seg }) do
     local cy = h - (y + ROW_H * 0.5)
-    ui.place_left(row.label, PAD + ROW_H + 12, cy, row.label_str or "", 17)
+    ui.place_left(row.label, PAD + ROW_H + 12, cy, row.label_str or "", 16)
     place_button(row.minus, ui.rect(PAD, y, ROW_H, ROW_H))
     place_button(row.plus, ui.rect(w - PAD - ROW_H, y, ROW_H, ROW_H))
     gui.set_position(row.value, vmath.vector3(w * 0.5, cy, 0))
@@ -180,20 +332,30 @@ function layout(self)
   end
   y = y + 12
 
-  -- 预设
+  -- 预设下拉框（整行）
   ui.place_left(self.nodes.preset_label, PAD, h - (y + 12), text.t("presets"), 20)
   y = y + 32
-  local pw = (inner - GAP * 2) / 3
-  for i, b in ipairs(self.preset_buttons) do
-    local col = (i - 1) % 3
-    local row = math.floor((i - 1) / 3)
-    place_button(b, ui.rect(PAD + col * (pw + GAP), y + row * (PRESET_H + GAP), pw, PRESET_H))
-  end
-  y = y + 2 * PRESET_H + GAP + 20
+  place_button(self.preset_select, ui.rect(PAD, y, inner, PRESET_BOX_H))
+  y = y + PRESET_BOX_H + 20
 
   -- 声音
   ui.place_left(self.nodes.sound_label, PAD, h - (y + 28), text.t("sound"), 20)
   place_button(self.sound_button, ui.rect(w - PAD - 130, y, 130, 56))
+  y = y + 56 + 20
+
+  -- 界面主题：三个按钮靠右，与上面的声音开关对齐
+  ui.place_left(self.nodes.theme_label, PAD, h - (y + 28), text.t("theme"), 20)
+  local tw = 96
+  local tgap = 8
+  local tx0 = w - PAD - (#theme.ORDER * tw + (#theme.ORDER - 1) * tgap)
+  for i, name in ipairs(theme.ORDER) do
+    place_button(self.theme_buttons[name],
+      ui.rect(tx0 + (i - 1) * (tw + tgap), y, tw, 56))
+  end
+  y = y + 56 + 20
+
+  -- 「怎么用」入口
+  place_button(self.help_link, ui.rect(PAD, y, inner, 56))
   y = y + 56 + 20
 
   -- 摘要 + 开始
@@ -201,9 +363,31 @@ function layout(self)
   y = y + 24
   place_button(self.start_button, ui.rect(PAD, y, inner, 92))
 
+  -- ---- 浮层 ----
+  local count = #presets_for(self.cfg.mode) + 1        -- 各档 +「自定义」
+  if self.preset_open then
+    gui.set_enabled(self.nodes.popup_bg, true)
+    gui.set_position(self.nodes.popup_bg, vmath.vector3(w * 0.5, h * 0.5, 0))
+    gui.set_size(self.nodes.popup_bg, vmath.vector3(w, h, 0))
+    local list_h = count * PRESET_OPT_H + (count - 1) * PRESET_OPT_GAP
+    local top = math.max(PAD, (h - list_h) * 0.5)
+    for i, b in ipairs(self.preset_options) do
+      if i <= count then
+        place_button(b, ui.rect(PAD, top + (i - 1) * (PRESET_OPT_H + PRESET_OPT_GAP),
+          inner, PRESET_OPT_H))
+      else
+        park_button(b)
+      end
+    end
+  else
+    gui.set_enabled(self.nodes.popup_bg, false)
+    park(self.nodes.popup_bg)
+    for _, b in ipairs(self.preset_options) do park_button(b) end
+  end
+
   --[[ 调试用：把每个可点控件在「窗口像素坐标」里的锚点报出来，
        自动化测试据此点击（避免测试脚本硬编码坐标——窗口大小/DPI/留边都会变）。
-       gui.local_to_screen 拿到的就是窗口像素、原点在左下角。 ]]
+       gui.get_screen_position 拿到的就是窗口像素、原点在左下角。 ]]
   if DEBUG_INPUT then
     local wsw, wsh = window.get_size()
     print(string.format("DBG window %.0f %.0f", wsw, wsh))
@@ -212,21 +396,59 @@ function layout(self)
       print(string.format("DBG pos %s %.1f %.1f", id, sp.x, sp.y))
     end
     for _, mode in ipairs(MODES) do report("mode_" .. mode, self.mode_buttons[mode].box) end
-    for i, b in ipairs(self.preset_buttons) do report("preset_" .. i, b.box) end
+    report("preset_select", self.preset_select.box)
     report("sound", self.sound_button.box)
+    for _, name in ipairs(theme.ORDER) do report("theme_" .. name, self.theme_buttons[name].box) end
+    report("help_link", self.help_link.box)
     report("start", self.start_button.box)
+    if self.preset_open then
+      for i = 1, #presets_for(self.cfg.mode) + 1 do
+        report("preset_opt_" .. i, self.preset_options[i].box)
+      end
+    end
+  end
+end
+
+local function layout_help(self)
+  local w, h = ui.screen()
+  gui.set_position(self.nodes.backdrop, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.nodes.backdrop, vmath.vector3(w, h, 0))
+
+  gui.set_position(self.nodes.help_title, vmath.vector3(w * 0.5, h - 96, 0))
+  gui.set_position(self.nodes.help_hint1, vmath.vector3(w * 0.5, h - 200, 0))
+  gui.set_position(self.nodes.help_hint2, vmath.vector3(w * 0.5, h - 240, 0))
+
+  local b = self.help_back
+  local r = ui.rect(PAD, h - PAD - 92, w - PAD * 2, 92)
+  b.rect = r
+  gui.set_position(b.box, vmath.vector3(r.x + r.w * 0.5, h - (r.y_top + r.h * 0.5), 0))
+  gui.set_size(b.box, vmath.vector3(r.w, r.h, 0))
+  gui.set_position(b.label, vmath.vector3(r.x + r.w * 0.5, h - (r.y_top + r.h * 0.5), 0))
+
+  if DEBUG_INPUT then
+    local sp = gui.get_screen_position(b.box)
+    print(string.format("DBG window %.0f %.0f", window.get_size()))
+    print(string.format("DBG pos help_back %.1f %.1f", sp.x, sp.y))
+  end
+end
+
+function layout(self)
+  if self.page == "help" then
+    layout_help(self)
+  else
+    layout_setup(self)
   end
 end
 
 -- ===================== 刷新显示 =====================
 
-function refresh(self)
+local function refresh_setup(self)
   local is_byoyomi = (self.cfg.mode == "byoyomi")
 
   for mode, b in pairs(self.mode_buttons) do
     local on = (self.cfg.mode == mode)
     gui.set_color(b.box, ui.v4(on and ui.C.accent or b.box_color))
-    gui.set_color(b.label, ui.v4(on and ui.C.bg or b.text_color))
+    gui.set_color(b.label, ui.v4(on and ui.C.accent_ink or b.text_color))
   end
 
   local add_key = "add_time"
@@ -254,20 +476,59 @@ function refresh(self)
   ui.enable_button(self.rows.seg.minus, is_byoyomi)
   ui.enable_button(self.rows.seg.plus, is_byoyomi)
 
-  for i, b in ipairs(self.preset_buttons) do
-    local p = PRESETS[i]
-    local on = (p.baseMin == self.cfg.baseMin and p.addSec == self.cfg.addSec)
+  -- 下拉框：显示当前档位（对不上任何一档就显示「自定义」）
+  local list = presets_for(self.cfg.mode)
+  local idx = preset_index(self)
+  self.preset_index = idx
+  local sel = (idx > 0) and preset_label(list[idx]) or text.t("preset_custom")
+  self.preset_select.label_str = text.t("presets") .. ":  " .. sel .. "   v"
+  gui.set_text(self.preset_select.label, self.preset_select.label_str)
+
+  -- 浮层里的每一档 + 最后一档「自定义」
+  for i, b in ipairs(self.preset_options) do
+    local p = list[i]
+    local lab = p and preset_label(p) or text.t("preset_custom")
+    if b.preset_label ~= lab then
+      b.preset_label = lab
+      gui.set_text(b.label, lab)
+    end
+    local on = (p ~= nil and i == idx)
     gui.set_color(b.box, ui.v4(on and ui.C.accent or b.box_color))
-    gui.set_color(b.label, ui.v4(on and ui.C.bg or b.text_color))
+    gui.set_color(b.label, ui.v4(on and ui.C.accent_ink or b.text_color))
+    ui.enable_button(b, self.preset_open and i <= (#list + 1))
   end
 
   gui.set_text(self.sound_button.label,
     self.cfg.sound and text.t("sound_on") or text.t("sound_off"))
   gui.set_color(self.sound_button.box, ui.v4(self.cfg.sound and ui.C.accent or ui.C.card2))
-  gui.set_color(self.sound_button.label, ui.v4(self.cfg.sound and ui.C.bg or ui.C.muted))
+  gui.set_color(self.sound_button.label,
+    ui.v4(self.cfg.sound and ui.C.accent_ink or ui.C.muted))
+
+  -- 当前主题高亮（三选一）
+  for _, name in ipairs(theme.ORDER) do
+    local b = self.theme_buttons[name]
+    local on = (self.cfg.theme == name)
+    gui.set_color(b.box, ui.v4(on and ui.C.accent or b.box_color))
+    gui.set_color(b.label, ui.v4(on and ui.C.accent_ink or b.text_color))
+  end
 
   gui.set_text(self.nodes.summary,
     text.t("summary") .. ": " .. E.describeConfig(settings.toEngineConfig(self.cfg)))
+end
+
+local function refresh_help(self)
+  gui.set_text(self.nodes.help_title, text.t("how"))
+  gui.set_text(self.nodes.help_hint1, text.t("how_start_1"))
+  gui.set_text(self.nodes.help_hint2, text.t("how_start_2"))
+  gui.set_text(self.help_back.label, text.t("back"))
+end
+
+function refresh(self)
+  if self.page == "help" then
+    refresh_help(self)
+  else
+    refresh_setup(self)
+  end
 end
 
 function save(self)
@@ -278,13 +539,21 @@ end
 
 --- 节点建好之后再挂回调。按钮就是 logic/ui.lua 造出来的那几个节点，
 --- 命中判定统一走 ui.pick（内部是 gui.pick_node），不自己算矩形。
-local function wire_buttons(self)
+local function wire_setup(self)
   for _, mode in ipairs(MODES) do
     self.mode_buttons[mode].on_click = function()
+      local prev = self.cfg.mode
       self.cfg.mode = mode
-      if mode == "byoyomi" and self.cfg.addSec < 1 then self.cfg.addSec = 30 end
+      -- 从别的模式第一次切进读秒：套用 10+3×20（已是某一档则保留用户挑的）
+      if prev ~= mode and mode == "byoyomi" then seed_byoyomi_default(self.cfg) end
+      -- 主时间 0（纯读秒）再配 0 秒读秒等于什么都没配；同时切走读秒时主时间必须 ≥ 1
+      if mode == "byoyomi" and self.cfg.baseMin < 1 and self.cfg.addSec < 1 then
+        self.cfg.addSec = 30
+      end
+      if mode ~= "byoyomi" and self.cfg.baseMin < 1 then self.cfg.baseMin = 1 end
       dbg("mode", mode)
       refresh(self)
+      layout(self)
       save(self)
     end
   end
@@ -304,14 +573,30 @@ local function wire_buttons(self)
     end
   end
 
-  for i, b in ipairs(self.preset_buttons) do
-    local p = PRESETS[i]
+  -- 下拉框：点一下开/关浮层
+  self.preset_select.on_click = function()
+    self.preset_open = not self.preset_open
+    dbg("preset_select", tostring(self.preset_open))
+    refresh(self)
+    layout(self)
+  end
+
+  -- 浮层里选一档；最后一档是「自定义」，点了只关浮层、不动数字
+  for i, b in ipairs(self.preset_options) do
     b.on_click = function()
-      self.cfg.baseMin = p.baseMin
-      self.cfg.addSec = p.addSec
-      dbg("preset", p.baseMin .. "+" .. p.addSec)
+      local p = presets_for(self.cfg.mode)[i]
+      self.preset_open = false
+      if p then
+        self.cfg.baseMin = p.baseMin
+        self.cfg.addSec = p.addSec
+        if p.periods then self.cfg.periods = p.periods end
+        dbg("preset", preset_label(p))
+        save(self)
+      else
+        dbg("preset", "custom")
+      end
       refresh(self)
-      save(self)
+      layout(self)
     end
   end
 
@@ -322,10 +607,57 @@ local function wire_buttons(self)
     save(self)
   end
 
+  -- 界面主题：交给总控去广播（两个 GUI 是各自独立的 Lua 状态，各建各的节点）
+  for _, name in ipairs(theme.ORDER) do
+    self.theme_buttons[name].on_click = function()
+      if self.cfg.theme == name then return end
+      self.cfg.theme = name
+      dbg("theme", name)
+      save(self)
+      msg.post("#main", "theme_changed", { theme = name })
+    end
+  end
+
+  -- 「怎么用」：切到单独一页（整屏重建，和换主题同一条路）
+  self.help_link.on_click = function()
+    dbg("help", "open")
+    self.preset_open = false
+    self.page = "help"
+    rebuild(self)
+  end
+
   self.start_button.on_click = function()
     dbg("start", settings.sanitize(self.cfg).mode)
     msg.post("#main", "start_game", { config = settings.sanitize(self.cfg) })
   end
+end
+
+local function wire_help(self)
+  self.help_back.on_click = function()
+    dbg("help", "close")
+    self.page = "setup"
+    rebuild(self)
+  end
+end
+
+local function wire_buttons(self)
+  if self.page == "help" then
+    wire_help(self)
+  else
+    wire_setup(self)
+  end
+end
+
+--[[ 换主题 / 切页要整屏重建（颜色与文案写在节点上，没法按变量重刷）：
+     删掉所有自建节点 → 重新建 → 刷新文案 → 重排 → 重新挂回调。 ]]
+function rebuild(self)
+  ui.clear_nodes(self)
+  self.buttons = {}
+  self.nodes = {}
+  build(self)
+  refresh(self)
+  layout(self)
+  wire_buttons(self)
 end
 
 -- ===================== Defold 回调 =====================
@@ -334,6 +666,14 @@ function init(self)
   self.buttons = {}
   self.nodes = {}
   self.cfg = settings.sanitize(nil)
+  -- 截图 / 调试用：直接打开某一页，或把预设下拉框展开（tools/screenshot.ps1 用）
+  self.page = "setup"
+  if sys.get_config_string("chessclock.demo_page", "setup") == "help" then
+    self.page = "help"
+  end
+  self.preset_open = (sys.get_config_int("chessclock.demo_preset_open", 0) == 1)
+  ui.set_theme(self.cfg.theme)
+  self.theme = ui.theme_name()
   build(self)
   refresh(self)                     -- 先写文案，layout 才能按文字宽度左对齐
   layout(self)
@@ -343,9 +683,19 @@ end
 function on_message(self, message_id, message, sender)
   if message_id == hash("settings") then
     self.cfg = settings.sanitize(message.config)
-    refresh(self)
-    layout(self)
-  elseif message_id == hash("window_resized") then
+    if use_theme(self, self.cfg.theme) then
+      rebuild(self)
+    else
+      refresh(self)
+      layout(self)
+    end
+  elseif message_id == hash("theme") then
+    self.cfg.theme = theme.normalize(message.theme)
+    if use_theme(self, self.cfg.theme) then
+      rebuild(self)
+    end
+  elseif message_id == hash("relayout") then
+    -- 总控在窗口尺寸变化时发来（见 main.script）：重排一遍，命中判定才不会拿着旧坐标
     layout(self)
   end
 end
@@ -353,6 +703,9 @@ end
 --[[ 指针按下 → 在按钮列表里找命中的那个（倒序，后建的优先）。
      ui.pick 内部是 gui.pick_node：它自己换算坐标空间，而且 disabled 的节点
      不可点 —— 所以「读秒段数」那一行被隐藏时不会误触。
+
+     下拉浮层打开时只认「浮层里的选项」和「下拉框本身」，点在别处等于关闭 ——
+     否则浮层背后的按钮（比如「开始对局」）会在视觉上被遮住却还能点到。
 
      调试：--config=chessclock.debug_input=1 时把每次按压打进日志，
      tools/click_test.ps1 正是靠这行判断"这次点击游戏到底收到没有"。 ]]
@@ -363,6 +716,22 @@ function on_input(self, action_id, action)
   if DEBUG_INPUT then
     print(string.format("DBG menu input action=%s pressed=true x=%.1f y=%.1f",
       tostring(action_id), px, py))
+  end
+
+  if self.preset_open then
+    for i = #self.buttons, 1, -1 do
+      local b = self.buttons[i]
+      if (b.kind == "option" or b == self.preset_select) and b.on_click and ui.pick(b, px, py) then
+        b.on_click()
+        return true
+      end
+    end
+    -- 点在浮层/下拉框以外 → 关掉浮层（不触发背后的按钮）
+    dbg("preset_select", "false")
+    self.preset_open = false
+    refresh(self)
+    layout(self)
+    return true
   end
 
   for i = #self.buttons, 1, -1 do
