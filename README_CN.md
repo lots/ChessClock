@@ -98,9 +98,10 @@ node serve.js            # 默认 8080 端口；也可 PORT=8081 node serve.js
 
 ### 方式 2：Godot 版装成安卓应用
 
-用 Godot 4.5 打出安卓 APK 再装到手机上（`adb install -r Godot/build/CoQChessClock-debug.apk`，或把文件拷进
-手机点开装），具体命令见 [`Godot/README.md`](Godot/README.md)。**APK 是构建产物、不入库**，所以需要在你自己
-的机器上打一次。同一台棋钟，但它是真正装在手机里的应用：原生音效、屏幕常亮、硬件返回键处理。
+**最快：直接下已经打包好的** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.0)
+（27.5 MB，调试签名），拷进手机点开装，或 `adb install -r CoQChessClock-debug.apk`。
+想自己打也行：用 Godot 4.5 导出，命令见 [`Godot/README.md`](Godot/README.md)（**APK 是构建产物、不入库**，
+所以仓库里没有这个文件）。同一台棋钟，但它是真正装在手机里的应用：原生音效、屏幕常亮、硬件返回键处理。
 目前只出过安卓的包。
 
 ### 方式 3：把网页版托管到网上（选手用各自的手机打开）
@@ -315,12 +316,13 @@ ChessClock/
 │   └── export-icons.js   由 logo-source.png 导出上面那些 PNG
 ├── serve.js              零依赖静态服务器（局域网给手机用）
 ├── tests/
-│   ├── engine.test.js    计时引擎测试（30 项）
+│   ├── engine.test.js    计时引擎测试（31 项）
 │   ├── project.test.js   项目完整性测试（22 项：双语 / 主题 / 默认值 / 预设 / 场景 / 开局方式 / 对坐几何 / 读秒段数条 / 图标…）
 │   ├── run.js            单进程测试入口
 │   └── visual/           无头 Chrome 视觉验证台（截图）＋ out/*.png 截图产物
 ├── Defold/               Defold（Lua）移植版：原生应用 / HTML5 都能出，见 Defold/README.md
 ├── Godot/                Godot 4 移植版：原生应用 / Web 都能出，见 Godot/README.md
+├── .github/workflows/    ci.yml（三端测试）+ android.yml（打 v* 标签时产出 APK 并挂到 Release）
 └── package.json          npm test / npm start / npm run shots
 ```
 
@@ -329,6 +331,17 @@ npm test        # 53 项测试：计时逻辑 + 页面/图标/双语/主题/默�
 npm start       # 启动局域网服务，手机即可访问
 npm run shots   # 用无头 Chrome 把各场景重新截图（需要本机有 Chrome/Edge）
 ```
+
+### CI 与已发布的安卓 APK
+
+* **`.github/workflows/ci.yml`**：每次 push / PR 都在 GitHub runner 上跑三套测试 —— `npm test`（53 项）、
+  Defold 的 `node tests/run.js`（20 项）、以及下载 Godot 4.5.1 之后的无头套件（引擎 31 + 界面 21 用例 +
+  与网页版对照 417 项）。命令与上面本地跑的完全一致，**CI 绿就等于本地绿**。
+* **`.github/workflows/android.yml`**：在 runner 上打调试版 APK；推 `v*` 标签时自动挂到同名 Release，
+  也可以手动 *Run workflow*（产物在本次运行的 artifacts 里）。
+* **已经发布：[v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** 带
+  `CoQChessClock-debug.apk`（27.5 MB，arm64-v8a，调试签名）—— 想装原生安卓应用，下这个最快。
+  APK 本身是构建产物，不入库。
 
 截图脚本还能挑场景 / 选像素密度 / 指定语言（改完样式或文案时很有用，不必跑满全部场景）：
 

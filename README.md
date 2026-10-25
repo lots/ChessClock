@@ -109,9 +109,10 @@ Connect the phone to the same Wi-Fi and open that `192.168.x.x` address in its b
 
 ### Option 2 — the Godot version as an Android app
 
-Build the Android APK with Godot 4.5 and install it on the phone (`adb install -r Godot/build/CoQChessClock-debug.apk`,
-or copy the file over and tap it) — the exact command is in [`Godot/README.md`](Godot/README.md). The APK is a
-**build output and is not committed**, so build it once on your machine. Same clock, but a real installed app:
+**Fastest: download the pre-built** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.0)
+(27.5 MB, debug-signed), copy it to the phone and tap it, or `adb install -r CoQChessClock-debug.apk`.
+To build it yourself, export with Godot 4.5 — the command is in [`Godot/README.md`](Godot/README.md) (the APK is a
+**build output and is not committed**, so the repo does not contain it). Same clock, but a real installed app:
 native sound, keep-awake, hardware back-button handling. Android is the only platform the APK has been built for
 so far.
 
@@ -383,12 +384,13 @@ ChessClock/
 │   └── export-icons.js   derives all those PNGs from logo-source.png
 ├── serve.js              zero-dependency static server (for phones on the LAN)
 ├── tests/
-│   ├── engine.test.js    timing engine tests (30)
+│   ├── engine.test.js    timing engine tests (31)
 │   ├── project.test.js   project-integrity tests (22: i18n / themes / defaults / presets / scenes / start-up / facing geometry / icons …)
 │   ├── run.js            single-process test entry point
 │   └── visual/           headless-Chrome visual rig (screenshots) + out/*.png artefacts
 ├── Defold/               the Defold (Lua) port: native apps and HTML5, see Defold/README.md
 ├── Godot/                the Godot 4 port: native apps and Web, see Godot/README.md
+├── .github/workflows/    ci.yml (all three test suites) + android.yml (builds the APK on a v* tag)
 └── package.json          npm test / npm start / npm run shots
 ```
 
@@ -397,6 +399,17 @@ npm test        # 53 tests: timing logic + page/icon/bilingual/theme/defaults/by
 npm start       # start the LAN server, open it on your phone
 npm run shots   # re-shoot every scene with headless Chrome (needs Chrome/Edge installed)
 ```
+
+### CI, and the released Android APK
+
+* **`.github/workflows/ci.yml`** runs all three suites on every push / pull request: `npm test` (53), the Defold
+  `node tests/run.js` (20) and the Godot headless suite on a downloaded Godot 4.5.1 (31 engine + 21 UI cases +
+  the 417-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
+* **`.github/workflows/android.yml`** builds the debug APK on a runner and attaches it to the GitHub Release when
+  a `v*` tag is pushed (or on demand through *Run workflow*, where it lands in the run's artifacts).
+* **Already released: [v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** carries
+  `CoQChessClock-debug.apk` (27.5 MB, arm64-v8a, debug-signed) — the fastest way to get the native Android app.
+  The APK itself is a build artifact and stays out of the repository.
 
 The screenshot script can also pick scenes, pixel density and language (handy after a styling or copy change, so
 you don't have to run every scene):

@@ -1,0 +1,84 @@
+name: CI
+
+# 三份实现各自的自动化测试。网页版是「基准实现」，另两份都与它逐项比对。
+#
+#   web    : npm test（53 项：引擎 31 + 项目完整性 22）
+#   defold : node tests/run.js（静态检查 + Lua 5.1 引擎/设置单测）
+#   godot  : 下载 Godot 4.5.1 → import → 引擎 31 用例 → 界面 21 用例 → 与网页版对照 417 项
+#
+# 这些命令与本地 Windows 上跑的完全一样（见各 README 的「测试」一节），
+# 只是把 `godot` 换成了 CI 里下载的 Linux 版二进制。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web (HTML5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm test
+        run: npm test
+
+  defold:
+    name: Defold (Lua)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Defold 的引擎/设置单测是纯 Lua（README：任意 Lua 5.1+ 都能跑）
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+          lua5.1 -v
+      - name: Static checks + Lua specs
+        working-directory: Defold
+        run: node tests/run.js
+
+  godot:
+    name: Godot 4.5
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: 4.5.1-stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # 界面测试里用了 SystemFont（CJK 回退），装一套字体免得 fontconfig 报警
+      - name: Install fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip fonts-noto-cjk fonts-dejavu-core
+      - name: Install Godot ${{ env.GODOT_VERSION }}
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}"
+          curl -sSL -o godot.zip "${base}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" godot
+          chmod +x godot
+          ./godot --version
+      # 第一步必须 import：没有 .godot/ 缓存时脚本跑不起来
+      - name: Import resources
+        run: ./godot --headless --path Godot --import
+      - name: Engine tests (31 cases)
+        run: ./godot --headless --path Godot --script res://tests/engine_tests.gd
+      - name: UI tests (21 cases)
+        run: ./godot --headless --path Godot --script res://tests/ui_tests.gd
+      - name: Cross-check against the web version (417 items)
+        run: |
+          ./godot --headless --path Godot --script res://tests/dump_spec.gd
+          node Godot/tests/project_spec.js
