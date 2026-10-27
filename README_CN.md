@@ -99,7 +99,7 @@ node serve.js            # 默认 8080 端口；也可 PORT=8081 node serve.js
 
 ### 方式 2：Godot 版装成安卓应用
 
-**最快：直接下已经打包好的** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.0)
+**最快：直接下已经打包好的** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.1)
 （27.5 MB，调试签名），拷进手机点开装，或 `adb install -r CoQChessClock-debug.apk`。
 想自己打也行：用 Godot 4.5 导出，命令见 [`Godot/README.md`](Godot/README.md)（**APK 是构建产物、不入库**，
 所以仓库里没有这个文件）。同一台棋钟，但它是真正装在手机里的应用：原生音效、屏幕常亮、硬件返回键处理。
@@ -340,7 +340,7 @@ npm run shots   # 用无头 Chrome 把各场景重新截图（需要本机有 Ch
   与网页版对照 431 项）。命令与上面本地跑的完全一致，**CI 绿就等于本地绿**。
 * **`.github/workflows/android.yml`**：在 runner 上打调试版 APK；推 `v*` 标签时自动挂到同名 Release，
   也可以手动 *Run workflow*（产物在本次运行的 artifacts 里）。
-* **已经发布：[v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** 带
+* **已经发布：[v1.0.1](https://github.com/lots/ChessClock/releases/tag/v1.0.1)** 带
   `CoQChessClock-debug.apk`（27.5 MB，arm64-v8a，调试签名）—— 想装原生安卓应用，下这个最快。
   APK 本身是构建产物，不入库。
 

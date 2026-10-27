@@ -110,7 +110,7 @@ Connect the phone to the same Wi-Fi and open that `192.168.x.x` address in its b
 
 ### Option 2 — the Godot version as an Android app
 
-**Fastest: download the pre-built** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.0)
+**Fastest: download the pre-built** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.1)
 (27.5 MB, debug-signed), copy it to the phone and tap it, or `adb install -r CoQChessClock-debug.apk`.
 To build it yourself, export with Godot 4.5 — the command is in [`Godot/README.md`](Godot/README.md) (the APK is a
 **build output and is not committed**, so the repo does not contain it). Same clock, but a real installed app:
@@ -408,7 +408,7 @@ npm run shots   # re-shoot every scene with headless Chrome (needs Chrome/Edge i
   the 431-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
 * **`.github/workflows/android.yml`** builds the debug APK on a runner and attaches it to the GitHub Release when
   a `v*` tag is pushed (or on demand through *Run workflow*, where it lands in the run's artifacts).
-* **Already released: [v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** carries
+* **Already released: [v1.0.1](https://github.com/lots/ChessClock/releases/tag/v1.0.1)** carries
   `CoQChessClock-debug.apk` (27.5 MB, arm64-v8a, debug-signed) — the fastest way to get the native Android app.
   The APK itself is a build artifact and stays out of the repository.
 
