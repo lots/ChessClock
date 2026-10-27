@@ -23,7 +23,7 @@ this web version, so they cannot quietly diverge:
 | | Version | Tech | Getting it onto a phone | Automated coverage |
 | --- | --- | --- | --- | --- |
 | **1** | **Web** — this folder. **Use this one first on a phone.** | HTML5 + vanilla JS, no build step, 53 tests | open it in the phone browser → *Add to Home Screen* (nothing to install, no store, offline after the first load) | **the reference implementation**: every constant / string / preset / colour of the other two is compared against it |
-| **2** | **Godot 4** — [`Godot/`](Godot/README.md). **The native-app version for Android.** | GDScript, Godot 4.5 | build the Android APK once (see [`Godot/README.md`](Godot/README.md) — the output is not committed) | **well tested**: 31 engine cases (220 assertions) + 21 headless UI cases (126 assertions) + 417 cross-checks + 17 screenshots |
+| **2** | **Godot 4** — [`Godot/`](Godot/README.md). **The native-app version for Android.** | GDScript, Godot 4.5 | build the Android APK once (see [`Godot/README.md`](Godot/README.md) — the output is not committed) | **well tested**: 31 engine cases (220 assertions) + 21 headless UI cases (126 assertions) + 431 cross-checks + 17 screenshots |
 | **3** | **Defold** — [`Defold/`](Defold/README.md) | Lua, Defold 1.13 | native build with Defold / `bob` (Linux, Windows, macOS, Android, HTML5) | **least tested of the three**: 31 engine + 13 settings cases and 20 static checks pass, but there is **no headless UI suite** — the interface was verified with screenshots plus one scripted real-mouse run |
 
 **Why the web version comes first**: nothing to install, nothing to sign, the same thing works on iPhone and
@@ -31,7 +31,7 @@ Android, and updating means copying a folder. **When to take the Godot version**
 Android app (native sound, keep-awake, hardware back button).
 
 **The Godot version has been tested more than the Defold version.** Godot has a headless UI suite that
-instantiates the real scene and clicks through it, a 417-item automated diff against this web version, and 17
+instantiates the real scene and clicks through it, a 431-item automated diff against this web version, and 17
 committed screenshots. Defold's engine and settings tests pass and its screenshots were reviewed, but its
 interface has only been exercised by a single scripted click run — so if you want a native build and have no
 reason to prefer Defold, choose Godot. (Both ports' READMEs are currently in Chinese.)
@@ -76,6 +76,7 @@ actually uses:
 | Sound switch | ✅ | Move beep + time-up alarm (synthesised live, no audio files) |
 | Two-sided facing layout (both players read their own side) | ✅ | “Facing mode” (`180°`) turns the far panel’s digits around; “Swap sides” (`⇵`) moves each colour to the other half — see section 5 |
 | Keep screen awake | ✅ | Wake Lock API, the screen stays on during a game |
+| Clickable logo | ✅ | Tap the logo (setup header or toolbar) to cycle **TARUMT → CoQ → Chess → Weiqi → MWA**; the choice is remembered across restarts |
 | Replaceable logo / favicon | ✅ | Overwrite `assets/logo-source.png`, run `node tools/export-icons.js`, see section 7 |
 | Battery indicator | ❌ | The phone has one; no need to duplicate it |
 | Multiple time controls (e.g. 40 moves/90 min + 30 min) | ❌ | Single period only; byoyomi “periods” are a different thing. See section 8 |
@@ -404,7 +405,7 @@ npm run shots   # re-shoot every scene with headless Chrome (needs Chrome/Edge i
 
 * **`.github/workflows/ci.yml`** runs all three suites on every push / pull request: `npm test` (53), the Defold
   `node tests/run.js` (20) and the Godot headless suite on a downloaded Godot 4.5.1 (31 engine + 21 UI cases +
-  the 417-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
+  the 431-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
 * **`.github/workflows/android.yml`** builds the debug APK on a runner and attaches it to the GitHub Release when
   a `v*` tag is pushed (or on demand through *Run workflow*, where it lands in the run's artifacts).
 * **Already released: [v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** carries
@@ -517,6 +518,25 @@ node tools/export-icons.js
 
 To change a displayed size, edit `width/height` for `.brand-logo` / `.strip-logo` in `styles.css`, the matching
 `width`/`height` in `index.html`, and the `JOBS` sizes in the script — the tests check all of them together.
+
+### Clicking the logo
+
+The logo in the setup header and the one at the left of the toolbar are buttons. Each tap advances
+**TARUMT → CoQ → Chess → Weiqi → MWA → TARUMT**; the choice is stored with the other settings in
+`localStorage` (`chessclock.settings.v1`) and restored on the next launch. Both logos always show the same
+one, and `?logo=chess` (any id) forces a particular one for a link or a screenshot without touching the
+saved choice.
+
+| Logo | Setup header (96×96) | Toolbar (48×48) |
+| --- | --- | --- |
+| TARUMT | `logo-brand.png` | `logo-strip.png` |
+| CoQ | `logo-coq-512.png` | `logo-coq-192.png` |
+| Chess | `logo-chess-512.png` | `logo-chess-192.png` |
+| Weiqi | `logo-weiqi-512.png` | `logo-weiqi-192.png` |
+| MWA | `logo-mwa-512.png` | `logo-mwa-192.png` |
+
+To add a sixth logo: drop its two PNGs in `assets/`, add the id to `LOGO_ORDER` and an entry to
+`LOGO_FILES` in `app.js`, and add a `logo.name.<id>` string to both languages in `i18n.js`.
 
 (`logo.svg` is the old CoQ vector art, kept only as a backup. Details in [assets/README.md](assets/README.md).)
 

@@ -20,14 +20,14 @@ Byoyomi 读秒本来就是围棋赛制。
 | | 版本 | 技术 | 怎么装到手机上 | 自动化测试 |
 | --- | --- | --- | --- | --- |
 | **1** | **网页版** —— 本目录。**手机上先用这个。** | HTML5 + 原生 JS，无需构建，53 项测试 | 手机浏览器打开 →「添加到主屏幕」（不用安装、不过应用商店，首次加载后离线可用） | **基准实现**：另两版的常量 / 文案 / 预设 / 色值都以它为准逐项比对 |
-| **2** | **Godot 4 版** —— [`Godot/`](Godot/README.md)。**安卓原生应用版。** | GDScript，Godot 4.5 | 自己打一次安卓 APK（步骤见 [`Godot/README.md`](Godot/README.md)，产物不入库） | **测试较充分**：引擎 31 用例（220 断言）+ 无头界面 21 用例（126 断言）+ 417 项对照 + 17 张截图 |
+| **2** | **Godot 4 版** —— [`Godot/`](Godot/README.md)。**安卓原生应用版。** | GDScript，Godot 4.5 | 自己打一次安卓 APK（步骤见 [`Godot/README.md`](Godot/README.md)，产物不入库） | **测试较充分**：引擎 31 用例（220 断言）+ 无头界面 21 用例（126 断言）+ 431 项对照 + 17 张截图 |
 | **3** | **Defold 版** —— [`Defold/`](Defold/README.md) | Lua，Defold 1.13 | 用 Defold / `bob` 自行打包（Linux、Windows、macOS、Android、HTML5） | **三份里测试最少的**：引擎 31 + 设置 13 用例、20 项静态检查通过，但**没有无头界面测试套件** —— 界面靠截图 + 一次脚本化点击回归核对 |
 
 **为什么先用网页版**：不用安装、不用签名，iPhone 与安卓都一样，更新就是拷一个文件夹。
 **什么时候用 Godot 版**：你想要一个真正装在手机里的安卓 App（原生音效、屏幕常亮、返回键处理）。
 
 **Godot 版的测试比 Defold 版更充分。** Godot 版有一套无头界面测试（真的把场景实例化出来并点击），
-另有与网页版逐项比对的 417 项检查、17 张入库截图。Defold 版的引擎与设置测试都通过、截图也人工核对过，
+另有与网页版逐项比对的 431 项检查、17 张入库截图。Defold 版的引擎与设置测试都通过、截图也人工核对过，
 但界面只跑过一次脚本化点击 —— 所以如果你要原生构建、又没有特别理由选 Defold，请选 Godot。
 （两个移植版目前的 README 都是中文。）
 
@@ -68,6 +68,7 @@ Byoyomi 读秒本来就是围棋赛制。
 | 声音开关 | ✅ | 走子提示音 + 超时警报（现场合成，无音频文件） |
 | 双面朝向（两位选手对坐各看一面） | ✅ | 「对坐模式」（`180°`）把对面那块面板的数字转正；「交换两侧」（`⇵`）把双方换到另外半屏，见第五节 |
 | 屏幕常亮 | ✅ | Wake Lock API，对局中不熄屏 |
+| 可点击的 logo | ✅ | 设置页页头或操作条上的 logo 点一下换下一个：**TARUMT → CoQ → 国际象棋 → 围棋 → MWA** 循环，选择会记住 |
 | 可替换的图标 / favicon | ✅ | 覆盖 `assets/logo-source.png` 后跑 `node tools/export-icons.js` 重出各尺寸，见第七节 |
 | 电池电量指示 | ❌ | 手机自带，不必重复 |
 | 多时段（如 40 步/90 分钟 + 30 分钟） | ❌ | 单时段；读秒的「多段」是另一回事。见第八节 |
@@ -336,7 +337,7 @@ npm run shots   # 用无头 Chrome 把各场景重新截图（需要本机有 Ch
 
 * **`.github/workflows/ci.yml`**：每次 push / PR 都在 GitHub runner 上跑三套测试 —— `npm test`（53 项）、
   Defold 的 `node tests/run.js`（20 项）、以及下载 Godot 4.5.1 之后的无头套件（引擎 31 + 界面 21 用例 +
-  与网页版对照 417 项）。命令与上面本地跑的完全一致，**CI 绿就等于本地绿**。
+  与网页版对照 431 项）。命令与上面本地跑的完全一致，**CI 绿就等于本地绿**。
 * **`.github/workflows/android.yml`**：在 runner 上打调试版 APK；推 `v*` 标签时自动挂到同名 Release，
   也可以手动 *Run workflow*（产物在本次运行的 artifacts 里）。
 * **已经发布：[v1.0.0](https://github.com/lots/ChessClock/releases/tag/v1.0.0)** 带
@@ -438,6 +439,24 @@ node tools/export-icons.js
 
 想调显示尺寸：改 `styles.css` 里 `.brand-logo` / `.strip-logo` 的 `width/height`、
 `index.html` 上对应的 `width`/`height`，以及脚本里的 `JOBS` 尺寸，测试会一起核对。
+
+### 点 logo 换标志
+
+设置页页头的 logo 和操作条左边的 logo 都是按钮。点一下按
+**TARUMT → CoQ → 国际象棋 → 围棋 → MWA → TARUMT** 循环；选择和其它设置一起存进
+`localStorage`（`chessclock.settings.v1`），关掉再打开还是上次那个。两处 logo 永远同步；
+链接里加 `?logo=chess`（任意 id）可以临时指定一个，不写盘，方便分享和截图。
+
+| 标志 | 设置页页头（96×96） | 操作条（48×48） |
+| --- | --- | --- |
+| TARUMT | `logo-brand.png` | `logo-strip.png` |
+| CoQ | `logo-coq-512.png` | `logo-coq-192.png` |
+| 国际象棋 | `logo-chess-512.png` | `logo-chess-192.png` |
+| 围棋 | `logo-weiqi-512.png` | `logo-weiqi-192.png` |
+| MWA | `logo-mwa-512.png` | `logo-mwa-192.png` |
+
+想再加第六个：把两张 PNG 放进 `assets/`，在 `app.js` 的 `LOGO_ORDER` 加 id、`LOGO_FILES` 加一项，
+再到 `i18n.js` 两种语言各加一条 `logo.name.<id>`。
 
 （`logo.svg` 是旧版 CoQ 矢量图形，现在只作备用。细节见 [assets/README.md](assets/README.md)。）
 

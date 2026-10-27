@@ -549,6 +549,60 @@ test('logo：原图 → 各尺寸 PNG，每个用途只有一个文件且不用 
     'logo-strip.png 应是 144×144（页面显示 48×48 的 3 倍）；换图后请重跑 node tools/export-icons.js');
 });
 
+test('标志：点一下循环 TARUMT → CoQ → Chess → 围棋 → MWA，并记住选择', () => {
+  // 1) 两处 logo 都包在按钮里（能点、能聚焦、键盘也能按）
+  assert.ok(
+    /<button[^>]*id="btnLogoBrand"[^>]*>[\s\S]{0,240}?class="brand-logo"/.test(html),
+    '设置页 logo 应包在 #btnLogoBrand 按钮里（可点击）'
+  );
+  assert.ok(
+    /<button[^>]*id="btnLogoStrip"[^>]*>[\s\S]{0,240}?class="strip-logo"/.test(html),
+    '棋钟操作条 logo 应包在 #btnLogoStrip 按钮里（可点击）'
+  );
+  assert.ok(/\.logo-btn\s*\{[^}]*padding:\s*0/.test(css),
+    '.logo-btn 不该有内距，否则会把操作条撑宽 / 页头撑高');
+
+  // 2) 顺序：TARUMT → CoQ → Chess → 围棋 → MWA
+  const m = /var LOGO_ORDER = \[([^\]]+)\]/.exec(app);
+  assert.ok(m, 'app.js 应有 LOGO_ORDER');
+  const order = (m[1].match(/'([a-z]+)'/g) || []).map((s) => s.replace(/'/g, ''));
+  assert.deepEqual(order, ['tarumt', 'coq', 'chess', 'weiqi', 'mwa'],
+    '循环顺序应是 TARUMT → CoQ → Chess → 围棋 → MWA');
+
+  // 3) 默认 TARUMT；每次点击换下一个并存盘
+  assert.ok(/logo:\s*'tarumt'/.test(app), '没选过时应显示 TARUMT');
+  const cycle = /function cycleLogo\(\) \{([\s\S]*?)\n  \}/.exec(app);
+  assert.ok(cycle, '找不到 cycleLogo()');
+  assert.ok(/\(i \+ 1\) % LOGO_ORDER\.length/.test(cycle[1]),
+    'cycleLogo() 应取下一个，数组末尾回到第一个');
+  assert.ok(/saveSettings\(\)/.test(cycle[1]),
+    'cycleLogo() 应调用 saveSettings()，否则关掉再打开就忘了');
+  assert.ok(/applyLogo\(\)/.test(cycle[1]), 'cycleLogo() 应立刻重画');
+
+  // 4) 启动时就套用上次选的（init 第一件事）
+  assert.ok(/function init\(\) \{\s*applyLogo\(\)/.test(app),
+    'init() 应先把上次选的标志应用上去（避免先闪一下 TARUMT）');
+
+  // 5) 两处 <img> 由同一份状态驱动
+  assert.ok(/brand\.src = files\.brand/.test(app) && /strip\.src = files\.strip/.test(app),
+    'applyLogo() 应同时更新设置页与操作条两处 logo');
+
+  // 6) 名字 / 无障碍文案走 i18n，中英各一份，且带 {name} 占位符
+  order.forEach((id) => {
+    assert.ok(I18N.DICT.zh['logo.name.' + id], '中文缺少 logo.name.' + id);
+    assert.ok(I18N.DICT.en['logo.name.' + id], '英文缺少 logo.name.' + id);
+  });
+  assert.ok(/\{name\}/.test(I18N.DICT.zh['logo.button.aria']));
+  assert.ok(/\{name\}/.test(I18N.DICT.en['logo.button.aria']));
+
+  // 7) 每个标志引用的两张位图都真的存在（brand 96×96 / strip 48×48）
+  const files = [...app.matchAll(/'(assets\/logo-[a-z0-9-]+\.png)'/g)].map((x) => x[1]);
+  assert.ok(files.length >= 10, '应能解析出每个标志的两张图，实际：' + files.length);
+  files.forEach((f) => {
+    assert.ok(fs.existsSync(path.join(ROOT, f)), '缺少标志位图：' + f);
+  });
+});
+
 test('站点图标（favicon / iOS 主屏）都指向 logo 资源，且 PNG 已生成', () => {
   // 标签页图标统一用从原图导出的 PNG（不再挂那个旧版 CoQ 的 SVG）
   assert.ok(!/rel="icon"[^>]*assets\/logo\.svg/.test(html),
