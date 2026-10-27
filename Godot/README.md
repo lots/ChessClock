@@ -115,7 +115,7 @@ godot --headless --path . --export-release "Android" build/CoQChessClock.aab
 | --- | --- |
 | 构建 | `--export-debug` 退出码 0，产出 `build/CoQChessClock-debug.apk` |
 | 大小 / ABI | **27.5 MB**，只含 `arm64-v8a`（预设里关掉了 armv7/x86） |
-| 清单（`aapt2 dump badging`） | `package=com.example.coqchessclock`、`versionName=1.0.0`、`minSdk=24`、`targetSdk=35`、`launchable-activity=com.godot.game.GodotApp`、自适应图标已生成 |
+| 清单（`aapt2 dump badging`） | `package=com.example.coqchessclock`、`versionName=1.0.1`（versionCode 2）、`minSdk=24`、`targetSdk=35`、`launchable-activity=com.godot.game.GodotApp`、自适应图标已生成 |
 | 签名（`apksigner verify`） | 通过，`CN=Godot, OU=Godot Engine, O=Stichting Godot`（Godot 自带的调试证书） |
 | 包内容 | `lib/arm64-v8a/libgodot_android.so` + `libc++_shared.so` + 全部游戏资源；`tests/` 已按预设排除（0 条目） |
 | 导出后的资源能否跑 | 同一预设导出 pck，再 `--main-pack` 跑 120 帧：退出码 0，无脚本错误 |
