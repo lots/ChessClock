@@ -23,6 +23,7 @@ const DEFAULTS := {
 	"keepAwake": true,
 	"lang": "en",             ## 首次打开：英文
 	"theme": "dark",          ## 深色（最初那套配色）为默认
+	"logo": "tarumt",         ## 网页版标志循环的当前选择；Godot 界面尚未移植，先保留字段对齐存档
 }
 
 
@@ -97,6 +98,7 @@ static func normalize(cfg: Dictionary) -> Dictionary:
 		"keepAwake": bool(cfg.get("keepAwake", DEFAULTS["keepAwake"])),
 		"lang": lang,
 		"theme": ClockTheme.normalize(cfg.get("theme", DEFAULTS["theme"])),
+		"logo": str(cfg.get("logo", DEFAULTS["logo"])),
 	}
 
 

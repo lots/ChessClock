@@ -192,4 +192,8 @@ layout 重算），并在开跑前删掉 `bundle` 里上一轮留下的 `chesscl
 - **横屏**：Defold 版固定竖屏上下分屏（`display.dynamic_orientation = 0`），
   「交换两侧」在它是上下互换；web 的横屏左右分屏没做；
 - **全屏**：引擎没有运行期 API（见上文第 8 项）；
-- **主题 / 双语**：仍按清单不做（本版英文单语 + 单一样式）。
+- **主题 / 双语**：仍按清单不做（本版英文单语 + 单一样式）；
+- **标志点击循环**：网页版点 logo 会在 TARUMT → CoQ → Chess → 围棋 → MWA 之间循环、并存进设置；
+  Defold 版仍是 `assets/logo.png` 一张静态贴图（`menu.gui` / `clock.gui` 各一个 `texture` 节点），
+  要移植时：把五张图并进 `logo.atlas`（或用 5 个贴图），给菜单和操作条的 logo 节点加 `pick_node` 命中，
+  状态存进 `logic/settings.lua` 的同名字段。

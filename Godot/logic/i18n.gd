@@ -25,6 +25,14 @@ const DICT := {
 		"app.noscript": "本棋钟需要启用 JavaScript 才能运行。",
 		"lang.button.aria": "切换界面语言：ENG / 华文",
 
+		# —— 标志（网页版的点击循环；Godot 界面尚未移植，先对齐词条） ——
+		"logo.button.aria": "切换标志（当前：{name}）",
+		"logo.name.tarumt": "TARUMT 校徽",
+		"logo.name.coq": "CoQ 棋钟",
+		"logo.name.chess": "国际象棋",
+		"logo.name.weiqi": "围棋",
+		"logo.name.mwa": "MWA 会徽",
+
 		# —— 设置页 ——
 		"setup.mode.heading": "1. 计时模式",
 		"setup.mode.aria": "计时模式",
@@ -132,6 +140,14 @@ const DICT := {
 		"app.description": "A board-game clock that runs in any phone browser — for chess and Weiqi (Go): Fischer increment / Bronstein delay / Byoyomi / sudden death. Fully local, no network needed.",
 		"app.noscript": "This clock needs JavaScript to be enabled.",
 		"lang.button.aria": "Switch interface language: ENG / 华文",
+
+		# —— Logo (web-only click cycle; not wired into the Godot UI yet) ——
+		"logo.button.aria": "Change logo (currently: {name})",
+		"logo.name.tarumt": "TARUMT crest",
+		"logo.name.coq": "CoQ Clock",
+		"logo.name.chess": "Chess",
+		"logo.name.weiqi": "Weiqi",
+		"logo.name.mwa": "MWA emblem",
 
 		"setup.mode.heading": "1. Time mode",
 		"setup.mode.aria": "Time mode",

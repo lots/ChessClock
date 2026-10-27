@@ -4,7 +4,7 @@ name: CI
 #
 #   web    : npm test（53 项：引擎 31 + 项目完整性 22）
 #   defold : node tests/run.js（静态检查 + Lua 5.1 引擎/设置单测）
-#   godot  : 下载 Godot 4.5.1 → import → 引擎 31 用例 → 界面 21 用例 → 与网页版对照 417 项
+#   godot  : 下载 Godot 4.5.1 → import → 引擎 31 用例 → 界面 21 用例 → 与网页版对照 431 项
 #
 # 这些命令与本地 Windows 上跑的完全一样（见各 README 的「测试」一节），
 # 只是把 `godot` 换成了 CI 里下载的 Linux 版二进制。
@@ -78,7 +78,7 @@ jobs:
         run: ./godot --headless --path Godot --script res://tests/engine_tests.gd
       - name: UI tests (21 cases)
         run: ./godot --headless --path Godot --script res://tests/ui_tests.gd
-      - name: Cross-check against the web version (417 items)
+      - name: Cross-check against the web version (431 items)
         run: |
           ./godot --headless --path Godot --script res://tests/dump_spec.gd
           node Godot/tests/project_spec.js
