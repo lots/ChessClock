@@ -97,6 +97,10 @@ node serve.js            # 默认 8080 端口；也可 PORT=8081 node serve.js
 手机连同一个 Wi-Fi，浏览器输入那个 `192.168.x.x` 地址即可。
 （若手机打不开，多半是 Windows 防火墙拦了 Node —— 首次运行会弹窗，选"允许专用网络"。）
 
+> **只有第一次打开需要联网，之后就能离线用。** 手机第一次打开页面时要联网（把 `index.html`、`styles.css`、
+> 三个脚本和图标素材下载一次）；页面一旦加载完成，整个棋钟都在本地运行 —— 不发任何网络请求、不依赖 CDN
+> 或在线字体 —— 直接开飞行模式也能继续用。
+
 ### 方式 2：Godot 版装成安卓应用
 
 **最快：直接下已经打包好的** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.1)

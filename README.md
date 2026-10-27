@@ -108,6 +108,11 @@ Connect the phone to the same Wi-Fi and open that `192.168.x.x` address in its b
 (If the phone cannot open it, Windows Firewall is usually blocking Node — the first run pops up a dialog, choose
 “allow on private networks”.)
 
+> **Online for the first launch only, then it runs offline.** The phone needs a connection the first time it
+> opens the page (it fetches `index.html`, `styles.css`, the three scripts and the logo assets once). Once the
+> page has loaded, the whole clock runs locally — no API calls, no CDN, no web fonts — so you can switch the
+> phone to airplane mode and keep using it.
+
 ### Option 2 — the Godot version as an Android app
 
 **Fastest: download the pre-built** [`CoQChessClock-debug.apk`](https://github.com/lots/ChessClock/releases/tag/v1.0.1)
