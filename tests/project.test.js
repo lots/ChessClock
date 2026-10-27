@@ -603,6 +603,31 @@ test('标志：点一下循环 TARUMT → CoQ → Chess → 围棋 → MWA，并
   });
 });
 
+test('窄屏页头：标题与副标题各占整行，不再被语言按钮挤成一词一行', () => {
+  // 旧版把 logo / 标题 / 语言按钮挤在同一行：320px 下标题列只剩 67px，
+  // 「CoQ Chess & Weiqi Clock」和副标题都被压成一词一行，页头高 266px
+  //（截图 screenshots/Too_Big.jpeg）。现在 ≤560px 走两行网格：
+  //   第一行 logo + 标题 + 语言按钮，第二行副标题独占整行。
+  const media = /@media \(max-width: 560px\) \{([\s\S]*?)\n\}/.exec(css);
+  assert.ok(media, 'styles.css 应有 ≤560px 的页头媒体查询');
+  const block = media[1];
+
+  assert.ok(
+    /\.app-head\s*\{[\s\S]*?grid-template-areas:\s*"logo title lang"\s*"sub\s+sub\s+sub"/.test(block),
+    '窄屏页头应是两行网格：logo/title/lang，副标题跨整行'
+  );
+  assert.ok(/\.app-head-text\s*\{\s*display:\s*contents/.test(block),
+    '要让 h1/.sub 直接成为网格项，.app-head-text 需 display: contents');
+  assert.ok(/\.app-head \.brand-logo\s*\{[^}]*width:\s*56px/.test(block),
+    '窄屏 logo 应收小到 56px，给标题让出宽度');
+  assert.ok(/\.app-head \.sub\s*\{[^}]*grid-area:\s*sub/.test(block),
+    '副标题应占整行（不再被语言按钮挤窄）');
+  assert.ok(/\.app-head \.lang-btn\s*\{[^}]*grid-area:\s*lang/.test(block),
+    '语言按钮固定在右上角那一格');
+  assert.ok(/\.brand-logo\s*\{[^}]*width:\s*96px/.test(css),
+    '大屏仍保持 96×96');
+});
+
 test('站点图标（favicon / iOS 主屏）都指向 logo 资源，且 PNG 已生成', () => {
   // 标签页图标统一用从原图导出的 PNG（不再挂那个旧版 CoQ 的 SVG）
   assert.ok(!/rel="icon"[^>]*assets\/logo\.svg/.test(html),

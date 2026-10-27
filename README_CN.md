@@ -306,7 +306,7 @@ ChessClock/
 ├── app.js                界面与操作层：渲染、触摸/键盘、声音、常亮、本地存储、切语言
 ├── assets/
 │   ├── logo-source.png   ★ 图标原图（当前为 TARUMT 校徽，447×447 带透明通道）
-│   ├── logo-brand.png    设置页 logo，288×288（页面按 96×96 显示）
+│   ├── logo-brand.png    设置页 logo，288×288（页面按 96×96 显示，手机 ≤560px 时 56×56）
 │   ├── logo-strip.png    棋钟操作条 logo，144×144（页面按 48×48 显示）
 │   ├── icon-32.png       favicon
 │   ├── icon-64.png       favicon（高分屏）
@@ -421,7 +421,7 @@ localStorage.removeItem('chessclock.settings.v1'); location.reload();
 
 | PNG | 用在哪 | 文件像素 | 页面显示 |
 | --- | --- | --- | --- |
-| `logo-brand.png` | 设置页 logo | 288×288 | 96×96 |
+| `logo-brand.png` | 设置页 logo | 288×288 | 96×96（手机 ≤560px 时 56×56） |
 | `logo-strip.png` | 棋钟操作条 logo | 144×144 | 48×48 |
 | `icon-32/64/180.png` | favicon / iOS 主屏 | 32 / 64 / 180 | — |
 

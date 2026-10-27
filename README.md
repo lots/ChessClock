@@ -374,7 +374,7 @@ ChessClock/
 ├── app.js                UI and input layer: rendering, touch/keyboard, sound, wake lock, local storage, language switch
 ├── assets/
 │   ├── logo-source.png   ★ the master logo (currently the TARUMT shield, 447×447 with alpha)
-│   ├── logo-brand.png    setup-page logo, 288×288 (displayed at 96×96)
+│   ├── logo-brand.png    setup-page logo, 288×288 (displayed at 96×96, 56×56 on phones)
 │   ├── logo-strip.png    toolbar logo, 144×144 (displayed at 48×48)
 │   ├── icon-32.png       favicon
 │   ├── icon-64.png       favicon (high DPI)
@@ -499,7 +499,7 @@ The page references derived files, and **each use has exactly one file**:
 
 | PNG | Used for | File pixels | Displayed at |
 | --- | --- | --- | --- |
-| `logo-brand.png` | setup-page logo | 288×288 | 96×96 |
+| `logo-brand.png` | setup-page logo | 288×288 | 96×96 (56×56 on phones, ≤560 px) |
 | `logo-strip.png` | toolbar logo | 144×144 | 48×48 |
 | `icon-32/64/180.png` | favicon / iOS home screen | 32 / 64 / 180 | — |
 
