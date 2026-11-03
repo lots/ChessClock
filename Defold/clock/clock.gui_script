@@ -24,6 +24,7 @@ local ui = require("logic.ui")
 local text = require("logic.text")
 local settings = require("logic.settings")
 local theme = require("logic.theme")
+local logos = require("logic.logos")
 
 local BAR_H = 96
 local ACCENT_W = 6
@@ -63,6 +64,7 @@ local EDGE_W = 3      -- light/medium 主题下面板外沿的描边宽度（dar
 local build, layout, layout_pane_text, layout_pane_bar, render, refresh_pane, update_toggle_button
 local engine_press, toggle_pause, toggle_sound, toggle_facing, toggle_swap
 local begin_game, show_overlay, hide_overlay
+local request_back, show_confirm, hide_confirm
 
 local function play(self, url)
   if self.cfg and self.cfg.sound then
@@ -129,7 +131,7 @@ local function build(self)
   end
 
   self.bar_bg = ui.box("bar", ui.rect(0, 0, 10, 10), ui.C.strip)
-  self.logo = ui.texture("logo", 0, 0, 48, hash("logo"))
+  self.logo = ui.texture("logo", 0, 0, 48, hash(logos.strip_anim(self.cfg.logo)))
 
   --[[ 中间操作条（与网页版 .strip 同序）：
        P / C 暂停继续 · 声音 · 180° 对坐 · 交换两侧 · 返回设置。
@@ -145,9 +147,16 @@ local function build(self)
   self.btn_swap = ui.make_icon_button(self.buttons, "btn_swap",
     { ui.ICONS.swap },
     function() toggle_swap(self) end, ui.C.card2, ICON_SIZE)
+  -- 操作条上的 logo 也可点：换下一个标志（与设置页那颗、网页版 #btnLogoStrip 一致）
+  self.buttons[#self.buttons + 1] = {
+    id = "logo",
+    box = self.logo,
+    on_click = function() cycle_logo(self) end,
+  }
+
   self.btn_menu = ui.make_icon_button(self.buttons, "btn_menu",
     { ui.ICONS.settings },
-    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ICON_SIZE)
+    function() request_back(self) end, ui.C.card2, ICON_SIZE)
 
   -- 未开表时「暂停 / 继续」整颗隐藏（render 里的 update_toggle_button 按状态再决定）
   gui.set_enabled(self.btn_toggle.box, false)
@@ -156,7 +165,8 @@ local function build(self)
 
   -- 超时结算层（平时隐藏）
   self.ov = {}
-  self.ov.dim = ui.box("ov_dim", ui.rect(0, 0, 10, 10), ui.dim(ui.C.clock_bg, 0.55))
+  local bgc = ui.C.clock_bg
+  self.ov.dim = ui.box("ov_dim", ui.rect(0, 0, 10, 10), { bgc[1], bgc[2], bgc[3], 0.55 })
   self.ov.card = ui.box("ov_card", ui.rect(0, 0, 10, 10), ui.C.card)
   self.ov.title = ui.text("ov_title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34, "", ui.C.fg)
   self.ov.sub = ui.text("ov_sub", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 30, "", ui.C.accent)
@@ -168,6 +178,23 @@ local function build(self)
   self.ov.nodes = { self.ov.dim, self.ov.card, self.ov.title, self.ov.sub, self.ov.detail,
     self.ov_rematch.box, self.ov_rematch.label, self.ov_back.box, self.ov_back.label }
   self.overlay_on = false
+
+  --[[ 返回确认层（对局进行中按齿轮 / ESC 时问一句）。
+       网页版用 window.confirm、Godot 版自绘确认卡，这里同样先问再走，
+       主按钮是「继续对局」（误触的方向更安全）。 ]]
+  self.cf = {}
+  self.cf.dim = ui.box("cf_dim", ui.rect(0, 0, 10, 10), { bgc[1], bgc[2], bgc[3], 0.55 })
+  self.cf.card = ui.box("cf_card", ui.rect(0, 0, 10, 10), ui.C.card)
+  self.cf.title = ui.text("cf_title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 26,
+    text.t("confirm_leave"), ui.C.fg)
+  self.cf_keep = ui.make_button(self.buttons, "cf_keep", text.t("btn_keep_play"),
+    function() hide_confirm(self) end, ui.C.ok, ui.C.ok_ink, 26)
+  self.cf_leave = ui.make_button(self.buttons, "cf_leave", text.t("btn_leave"),
+    function() msg.post("#main", "back_to_menu") end, ui.C.card2, ui.C.fg, 24)
+  self.cf.nodes = { self.cf.dim, self.cf.card, self.cf.title,
+    self.cf_keep.box, self.cf_keep.label, self.cf_leave.box, self.cf_leave.label }
+  self.confirm_on = false
+  for _, n in ipairs(self.cf.nodes) do gui.set_enabled(n, false) end
 end
 
 --[[ 切到目标主题（共享的 ui.C 会被改成它），返回「这个界面是否需要重建」。
@@ -387,6 +414,17 @@ function layout(self)
   gui.set_position(self.ov.detail, vmath.vector3(ccx, h - (card_y + 185), 0))
   place_button(self, self.ov_rematch, ui.rect(card_x + 28, card_y + card_h - 170, card_w - 56, 76))
   place_button(self, self.ov_back, ui.rect(card_x + 28, card_y + card_h - 82, card_w - 56, 62))
+
+  -- 返回确认层：一张更矮的卡（标题 + 两颗按钮）
+  local cf_h = 290
+  local cf_y = (h - cf_h) * 0.5
+  gui.set_position(self.cf.dim, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.cf.dim, vmath.vector3(w, h, 0))
+  gui.set_position(self.cf.card, vmath.vector3(w * 0.5, h * 0.5, 0))
+  gui.set_size(self.cf.card, vmath.vector3(card_w, cf_h, 0))
+  gui.set_position(self.cf.title, vmath.vector3(w * 0.5, h - (cf_y + 66), 0))
+  place_button(self, self.cf_keep, ui.rect(card_x + 28, cf_y + cf_h - 160, card_w - 56, 76))
+  place_button(self, self.cf_leave, ui.rect(card_x + 28, cf_y + cf_h - 72, card_w - 56, 62))
 end
 
 -- ===================== 绘制 =====================
@@ -589,6 +627,25 @@ function render(self)
   end
 end
 
+-- ===================== 标志 =====================
+
+--[[ 点操作条上的 logo：换成下一个（到头绕回），存盘并让设置页那颗同步。 ]]
+function cycle_logo(self)
+  self.cfg.logo = logos.next_id(self.cfg.logo)
+  apply_logo(self)
+  if DEBUG_INPUT then print("DBG clock logo logo=" .. tostring(self.cfg.logo)) end
+  msg.post("#main", "save_settings", { config = self.cfg })
+  msg.post("#gui_menu", "logo", { logo = self.cfg.logo })
+end
+
+--- 把 cfg.logo 画到操作条那颗 logo 上（同一张图集里换 flipbook）
+function apply_logo(self)
+  if self.logo then
+    gui.play_flipbook(self.logo, hash(logos.strip_anim(self.cfg.logo)))
+  end
+end
+
+
 -- ===================== 结算层 =====================
 
 function show_overlay(self, loser)
@@ -607,6 +664,31 @@ end
 function hide_overlay(self)
   self.overlay_on = false
   for _, n in ipairs(self.ov.nodes) do gui.set_enabled(n, false) end
+end
+
+-- ===================== 返回确认 =====================
+
+function show_confirm(self)
+  if self.confirm_on then return end
+  self.confirm_on = true
+  if DEBUG_INPUT then print("DBG clock confirm open") end
+  for _, n in ipairs(self.cf.nodes) do gui.set_enabled(n, true) end
+end
+
+function hide_confirm(self)
+  self.confirm_on = false
+  for _, n in ipairs(self.cf.nodes) do gui.set_enabled(n, false) end
+end
+
+--[[ 想离开棋钟页时：对局进行中先问一句，否则直接走。
+     与网页版 backToSetup（window.confirm）和 Godot 版的自绘确认卡同一套行为：
+     没开表 / 已结束时不必打扰；正在进行时误触也不会直接丢掉这一局。 ]]
+function request_back(self)
+  if self.state and self.state.started and not self.state.finished then
+    show_confirm(self)
+    return
+  end
+  msg.post("#main", "back_to_menu")
 end
 
 --[[ 换主题要整屏重建：颜色是在建节点时写进节点的，Defold 没有「按变量重刷」的办法。
@@ -666,9 +748,12 @@ function toggle_pause(self)
 end
 
 function toggle_sound(self)
-  self.cfg.sound = not self.cfg.sound
+  -- 点一下：图标换到图标集里的下一张（开 ↔ 关，到头绕回），状态跟着图标走
+  local next_anim = self.btn_sfx.cycle_icon()
+  self.cfg.sound = (next_anim == ui.ICONS.sound_on)
   msg.post("#main", "save_settings", { config = self.cfg })
   update_toggle_button(self)
+  render(self)            -- 让图标颜色（accent / fg）立刻跟上，不等下一帧
   if self.cfg.sound then play(self, "#sfx_click") end
 end
 
@@ -729,6 +814,10 @@ function begin_game(self, config)
   end
   msg.post("#sfx_alarm", "stop")
   hide_overlay(self)
+  hide_confirm(self)
+  if sys.get_config_int("chessclock.demo_confirm", 0) == 1 then
+    show_confirm(self)          -- 截图 / 目视核对：「离开对局？」确认卡
+  end
   layout(self)
   render(self)
 end
@@ -749,6 +838,11 @@ function init(self)
 end
 
 function on_message(self, message_id, message, sender)
+  if message_id == hash("logo") then
+    self.cfg.logo = logos.normalize(message.logo)
+    apply_logo(self)
+    return
+  end
   if message_id == hash("begin") then
     begin_game(self, message.config)
   elseif message_id == hash("theme") then
@@ -785,7 +879,7 @@ function on_input(self, action_id, action)
     if action.pressed then toggle_facing(self); return true end
     return false
   elseif action_id == hash("key_esc") then
-    if action.pressed then msg.post("#main", "back_to_menu"); return true end
+    if action.pressed then request_back(self); return true end
     return false
   end
 
@@ -801,6 +895,15 @@ function on_input(self, action_id, action)
       tostring(gui.pick_node(self.pane.w.bg, px, py)),
       tostring(gui.pick_node(self.bar_bg, px, py)),
       tostring(ui.pick(self.btn_toggle, px, py))))
+  end
+
+  if self.confirm_on then
+    if ui.pick(self.cf_keep, px, py) then
+      hide_confirm(self)
+    elseif ui.pick(self.cf_leave, px, py) then
+      msg.post("#main", "back_to_menu")
+    end
+    return true                            -- 确认层挡住整屏
   end
 
   if self.overlay_on then

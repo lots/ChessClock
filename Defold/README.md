@@ -26,6 +26,9 @@
 ![中性主题（medium）的设置页](tests/screenshots/menu-medium.png)
 ![浅色主题下的棋钟页](tests/screenshots/clock-light.png)
 ![超时结算层](tests/screenshots/overlay.png)
+![离开对局的确认卡](tests/screenshots/confirm.png)
+![标志循环：CoQ](tests/screenshots/logo-coq.png)
+![标志循环：围棋](tests/screenshots/logo-weiqi.png)
 
 ---
 
@@ -43,7 +46,7 @@
 | **输入链路（真实点击）** | `tools/click_test.ps1` 往窗口注入真实鼠标点击 | 一次完整通过：模式按钮、START GAME、**拍对侧开表**（`side=b target=w result=start`）、走一手、交换两侧、P/C 暂停继续全部生效（见第五节；这台机器上注入点击偶尔会被系统吞掉，脚本会重试） |
 | **超时结算层** | `tools/screenshot.ps1 -Scene overlay`（1 分钟无加秒 + 键盘 A 开表，等 60 秒） | 结算卡片正常弹出：`BLACK TIME UP / WHITE WINS / 1 min - Sudden death - 0 MOVE`，见 `tests/screenshots/overlay.png` |
 | **字符字形覆盖** | 解析 Defold 内置字体 `vera_mo_bd.ttf` 的 cmap + 静态校验 | `°` `×` 有字形（继续用文字）；`⇵` `⛶` `⚙` `🔊` **没有**，图标按钮已改成 PNG（见第七节） |
-| 工程静态一致性 + 设置单测 | `node tests/run.js` | **20/20 通过**（静态 18 + Lua 单测入口 2；引擎用例 31/31、设置用例 13/13，见第五节） |
+| 工程静态一致性 + 设置单测 | `node tests/run.js` | **23/23 通过**（静态 21 + Lua 单测入口 2；引擎用例 31/31、设置用例 13/13，见第五节） |
 
 **还没验证的**（需要真机或编辑器，属于你接下来要做的事）：
 
@@ -91,6 +94,8 @@ powershell -ExecutionPolicy Bypass -File tools/build_and_run.ps1
 | `chessclock.demo_theme=light` | 指定界面主题（`light` / `medium` / `dark`），截图时用 |
 | `chessclock.demo_page=help` | 启动直接打开「怎么用」那一页（截图 / 目视核对用） |
 | `chessclock.demo_preset_open=1` | 启动就把时间预设的下拉浮层展开（截图 / 目视核对用） |
+| `chessclock.demo_confirm=1` | 进棋钟页后直接弹出「离开对局？」确认卡（截图用） |
+| `chessclock.demo_logo=weiqi` | 把标志换成指定那一张（tarumt / coq / chess / weiqi / mwa），截图用 |
 | `chessclock.demo_byoyomi=1` | 开局直接摆一副读秒残局（1 分钟主时间 + 20 秒×3 段，并假装已走 86 秒），用来拍「段数条变红一段」 |
 
 ### E. 没声音怎么查（按顺序，5 分钟能定位）
@@ -164,6 +169,10 @@ powershell -ExecutionPolicy Bypass -File tools/build_and_run.ps1
 * **交换两侧**：只交换两块面板在屏幕上的**位置**（竖屏即上下互换），不改朝向；
   旋转永远跟着「视觉上第一块」走，所以交换后被旋转的是另一块（与网页版的 `.is-far` 同一套规则）。
   这个选择会存进存档，下一局仍然有效。
+* **点 logo 换标志**：设置页那颗和操作条那颗都能点，在 TARUMT → CoQ → Chess → 围棋 → MWA 之间循环，
+  选择随设置保存（图集里五张图都是现成的，换图 = 换 flipbook）。与网页版 / Godot 版同一套。
+* **对局中离开会先问一句**：按齿轮或 `ESC` 时弹出「离开对局？」确认卡（主按钮是**继续对局**），
+  与网页版的 `window.confirm`、Godot 版的自绘确认卡一致 —— 误触不会直接丢掉一局。
 * **两个时间可以为 0**：读秒模式下**基础时间**与**读秒秒数**各可以是 0（但不能同时是 0）——
   0 主时间 = 纯读秒，0 秒读秒 = 只有主时间、用完即负（段数条隐藏）；
   两个都是 0 时按 1 分钟主时间兜底。
@@ -279,7 +288,7 @@ powershell -ExecutionPolicy Bypass -File tools/click_test.ps1      # 注入真�
 powershell -ExecutionPolicy Bypass -File tools/click_test.ps1 -PresetId 1 -FlagWaitSeconds 70   # 连超时结算层一起验（约 2 分钟）
 ```
 
-**截图**（`-Scene` 有七个：`menu` / `help` / `preset-open` / `clock` / `clock-byoyomi` / `clock-swapped` / `overlay`）：
+**截图**（`-Scene` 有九个：`menu` / `help` / `preset-open` / `clock` / `clock-byoyomi` / `clock-swapped` / `confirm` / `overlay` / `logo-<id>`）：
 
 ```bash
 powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene menu
@@ -288,6 +297,8 @@ powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene help       
 powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene clock
 powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene clock-byoyomi   # 直接摆读秒残局，不用等 86 秒
 powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene clock-swapped   # 不用点鼠标就能拍到交换后的界面
+powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene confirm         # 「离开对局？」确认卡
+powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene logo-weiqi      # 换成围棋标志后的设置页
 powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Scene overlay         # 按 A 开表 → 等 60 秒 → 拍结算层
 
 # 三套主题各拍一张（-Theme light|medium|dark）

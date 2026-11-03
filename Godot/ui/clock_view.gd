@@ -15,6 +15,7 @@ signal sound_toggle_requested
 signal facing_toggle_requested
 signal swap_toggle_requested
 signal fullscreen_requested
+signal logo_toggle_requested
 
 var app: Node
 
@@ -36,8 +37,20 @@ var _bars := {}
 
 ## 读秒段数条的高度（原本 8，按需求加厚 10%）
 const BAR_H := 8.8
+
+## 图标按钮的「图标集」：一个按钮对应一组按固定顺序排好的贴图，
+## 点一下换到下一张、到头绕回第一张 —— 与网页版 `ICON_SETS`、
+## Defold 版 `ui.make_icon_button(anims)` 是同一套语义。
+## 现在只有声音按钮是两态的：[开, 关]。
+const ICON_SETS := {
+	"sound": [
+		preload("res://assets/icons/sound_on.png"),
+		preload("res://assets/icons/sound_off.png"),
+	],
+}
 var _tags := {}
 
+var _strip_logo: TextureRect
 var _pause_btn: Button
 var _sound_btn: Button
 var _rotate_btn: Button
@@ -222,7 +235,10 @@ func _build_strip() -> void:
 	_setup_btn.pressed.connect(func() -> void: back_requested.emit())
 
 	var logo := TextureRect.new()
-	logo.texture = load("res://assets/logo-strip.png")
+	logo.texture = load(ClockLogos.strip_path("tarumt"))
+	_strip_logo = logo
+	logo.mouse_filter = Control.MOUSE_FILTER_STOP
+	logo.gui_input.connect(_on_logo_input)
 	logo.custom_minimum_size = Vector2(44, 44)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -321,11 +337,43 @@ func _apply_chip_style(side: String) -> void:
 		ClockTheme.box(Color(0, 0, 0, 0), Color(color.r, color.g, color.b, 0.55), 999, 1, 7, 1))
 
 
+## 把某个图标按钮设成图标集里的第 index 张（越界自动绕回）；返回实际下标
+func set_icon_state(set_name: String, index: int) -> int:
+	var textures: Array = ICON_SETS[set_name]
+	var i: int = ((index % textures.size()) + textures.size()) % textures.size()
+	var btn: Button = _sound_btn if set_name == "sound" else null
+	if btn != null and btn.icon != textures[i]:
+		btn.icon = textures[i]
+	return i
+
+
+## 点一下 → 图标集里的下一张（到头绕回）；返回新下标。
+## 用户点声音按钮走这条路径，状态（cfg.sound）由下标反推，见 main.gd::_toggle_sound
+func cycle_icon(set_name: String) -> int:
+	var textures: Array = ICON_SETS[set_name]
+	var current: int = textures.find(_sound_btn.icon) if set_name == "sound" else -1
+	return set_icon_state(set_name, (current + 1) if current >= 0 else 1)
+
+
+## 把当前标志应用到操作条上的小 logo，并写好提示文案
+func apply_logo() -> void:
+	var id := ClockLogos.normalize(app.cfg.get("logo", ClockLogos.ORDER[0]))
+	var tex: Texture2D = load(ClockLogos.strip_path(id))
+	if _strip_logo != null and _strip_logo.texture != tex:
+		_strip_logo.texture = tex
+	if _strip_logo != null:
+		_strip_logo.tooltip_text = t("logo.button.aria", {"name": t(ClockLogos.name_key(id))})
+
+
+## 点操作条上的 logo：换下一个（到头绕回）；存盘交给总控（它同时刷新设置页那颗）
+func _on_logo_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		logo_toggle_requested.emit()
+		accept_event()
+
 func update_sound_icon() -> void:
 	var on: bool = bool(app.cfg.get("sound", true))
-	var path := "res://assets/icons/sound_on.png" if on else "res://assets/icons/sound_off.png"
-	if _sound_btn.icon != load(path):
-		_sound_btn.icon = load(path)
+	set_icon_state("sound", 0 if on else 1)     # 第 0 张 = 开，第 1 张 = 关
 	_sound_btn.tooltip_text = t("clock.sound.off") if on else t("clock.sound.on")
 
 

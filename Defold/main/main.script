@@ -14,6 +14,7 @@
 ]]
 
 local settings = require("logic.settings")
+local logos = require("logic.logos")
 local theme = require("logic.theme")
 local E = require("logic.engine")
 
@@ -52,6 +53,15 @@ function init(self)
     self.cfg.theme = theme.normalize(demo_theme)
     settings.save(self.cfg)
     print("demo_theme -> " .. tostring(self.cfg.theme))
+  end
+
+  -- 截图/演示用：指定标志（tarumt / coq / chess / weiqi / mwa）
+  --   打包产物：--config=chessclock.demo_logo=weiqi
+  local demo_logo = sys.get_config_string("chessclock.demo_logo", "")
+  if demo_logo ~= "" then
+    self.cfg.logo = logos.normalize(demo_logo)
+    settings.save(self.cfg)
+    print("demo_logo -> " .. tostring(self.cfg.logo))
   end
 
   -- 截图/演示用：把时间调成 1 分钟无加秒（验证超时结算层时不用等 10 分钟）

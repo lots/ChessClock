@@ -13,6 +13,7 @@
 local M = {}
 
 local theme = require("logic.theme")
+local logos = require("logic.logos")
 
 local FILE = "chessclock_settings"
 
@@ -30,6 +31,7 @@ M.DEFAULTS = {
   facing = true,
   swapped = false,
   theme = "dark",          -- 与网页版 DEFAULTS.theme 一致（深色是默认那套）
+  logo = "tarumt",         -- 标志循环的当前选择（点 logo 换下一个，与网页版 DEFAULTS.logo 一致）
 }
 
 local function clampInt(v, mn, mx, dflt)
@@ -87,6 +89,7 @@ function M.sanitize(raw)
   out.facing = raw.facing ~= false
   out.swapped = raw.swapped == true          -- 旧存档没有这个键 → false（严格布尔）
   out.theme = theme.normalize(raw.theme)     -- 旧存档没有这个键 / 值不认识 → 默认深色
+  out.logo = logos.normalize(raw.logo)       -- 旧存档没有这个键 / 值不认识 → TARUMT
   if out.mode == "sudden" then out.addSec = 0 end
   return out
 end

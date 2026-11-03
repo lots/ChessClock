@@ -51,6 +51,14 @@ local strings = {
     how_start_2  = "After your move tap your own side - the opponent's clock runs",
 
     -- 「怎么用」现在单独一页：设置页只留入口，页内标题 / 返回按钮各一条
+    -- 标志循环（点 logo 换下一个）：五个名字 + 提示文案（占位符 {name}）
+    logo_button      = "Change logo (currently: {name})",
+    logo_name_tarumt = "TARUMT crest",
+    logo_name_coq    = "CoQ Clock",
+    logo_name_chess  = "Chess",
+    logo_name_weiqi  = "Weiqi",
+    logo_name_mwa    = "MWA emblem",
+
     how          = "HOW TO USE",
     back         = "< BACK",
     preset_custom = "CUSTOM",
@@ -83,6 +91,11 @@ local strings = {
 
     btn_rematch  = "REMATCH",
     btn_back     = "MAIN MENU",
+
+    -- 对局进行中按齿轮 / ESC 时的返回确认（与网页版 window.confirm、Godot 自绘确认卡一致）
+    confirm_leave  = "Leave the game?",
+    btn_keep_play  = "KEEP PLAYING",
+    btn_leave      = "LEAVE",
   },
   zh = {
     title        = "CoQ 棋钟",
@@ -110,6 +123,13 @@ local strings = {
     how_start_2  = "此后谁走完棋就拍自己那一侧，对方的钟随即开始计时",
 
     -- 「怎么用」现在单独一页：设置页只留入口，页内标题 / 返回按钮各一条
+    logo_button      = "切换标志（当前：{name}）",
+    logo_name_tarumt = "TARUMT 校徽",
+    logo_name_coq    = "CoQ 棋钟",
+    logo_name_chess  = "国际象棋",
+    logo_name_weiqi  = "围棋",
+    logo_name_mwa    = "MWA 会徽",
+
     how          = "怎么用",
     back         = "< 返回",
     preset_custom = "自定义",
@@ -140,6 +160,10 @@ local strings = {
 
     btn_rematch  = "再来一局",
     btn_back     = "返回设置",
+
+    confirm_leave  = "离开对局？",
+    btn_keep_play  = "继续对局",
+    btn_leave      = "离开",
   },
 }
 

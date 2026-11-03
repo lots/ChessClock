@@ -190,6 +190,7 @@ function M.make_icon_button(store, id, anims, on_click, box_color, size)
     box = M.box(id .. "_box", M.rect(0, 0, 10, 10), box_color or M.C.card2),
     icon_nodes = {},
     icons = {},
+    anims = anims,          -- 图标集（按顺序排列的动画名，点一下切到下一张）
     icon_size = size or 30,
     rect = M.rect(0, 0, 10, 10),
     on_click = on_click,
@@ -216,6 +217,21 @@ function M.make_icon_button(store, id, anims, on_click, box_color, size)
     gui.set_enabled(b.icons[b.current_icon], false)
     gui.set_enabled(b.icons[anim], true)
     b.current_icon = anim
+  end
+
+  --[[ 点一下 → 图标集里的下一张（到头绕回第一张），返回新的动画名。
+       与网页版 ICON_SETS + cycleIcon()、Godot 版 ClockView.ICON_SETS + cycle_icon()
+       是同一套语义：图标按钮不是「按状态硬换一张」，而是在**一组预定义图标**里循环。 ]]
+  function b.cycle_icon()
+    local n = #b.anims
+    if n == 0 then return b.current_icon end
+    local i = 1
+    for k, anim in ipairs(b.anims) do
+      if anim == b.current_icon then i = k break end
+    end
+    local next_anim = b.anims[(i % n) + 1]
+    b.set_icon(next_anim)
+    return next_anim
   end
   store[#store + 1] = b
   return b

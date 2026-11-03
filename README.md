@@ -22,16 +22,16 @@ this web version, so they cannot quietly diverge:
 
 | | Version | Tech | Getting it onto a phone | Automated coverage |
 | --- | --- | --- | --- | --- |
-| **1** | **Web** — this folder. **Use this one first on a phone.** | HTML5 + vanilla JS, no build step, 53 tests | open it in the phone browser → *Add to Home Screen* (nothing to install, no store, offline after the first load) | **the reference implementation**: every constant / string / preset / colour of the other two is compared against it |
-| **2** | **Godot 4** — [`Godot/`](Godot/README.md). **The native-app version for Android.** | GDScript, Godot 4.5 | build the Android APK once (see [`Godot/README.md`](Godot/README.md) — the output is not committed) | **well tested**: 31 engine cases (220 assertions) + 21 headless UI cases (126 assertions) + 431 cross-checks + 17 screenshots |
-| **3** | **Defold** — [`Defold/`](Defold/README.md) | Lua, Defold 1.13 | native build with Defold / `bob` (Linux, Windows, macOS, Android, HTML5) | **least tested of the three**: 31 engine + 13 settings cases and 20 static checks pass, but there is **no headless UI suite** — the interface was verified with screenshots plus one scripted real-mouse run |
+| **1** | **Web** — this folder. **Use this one first on a phone.** | HTML5 + vanilla JS, no build step, 56 tests | open it in the phone browser → *Add to Home Screen* (nothing to install, no store, offline after the first load) | **the reference implementation**: every constant / string / preset / colour of the other two is compared against it |
+| **2** | **Godot 4** — [`Godot/`](Godot/README.md). **The native-app version for Android.** | GDScript, Godot 4.5 | build the Android APK once (see [`Godot/README.md`](Godot/README.md) — the output is not committed) | **well tested**: 31 engine cases (220 assertions) + 23 headless UI cases (156 assertions) + 443 cross-checks + 17 screenshots |
+| **3** | **Defold** — [`Defold/`](Defold/README.md) | Lua, Defold 1.13 | native build with Defold / `bob` (Linux, Windows, macOS, Android, HTML5) | **least tested of the three**: 31 engine + 13 settings cases and 21 static checks pass, but there is **no headless UI suite** — the interface was verified with screenshots plus one scripted real-mouse run |
 
 **Why the web version comes first**: nothing to install, nothing to sign, the same thing works on iPhone and
 Android, and updating means copying a folder. **When to take the Godot version**: you want a real installed
 Android app (native sound, keep-awake, hardware back button).
 
 **The Godot version has been tested more than the Defold version.** Godot has a headless UI suite that
-instantiates the real scene and clicks through it, a 431-item automated diff against this web version, and 17
+instantiates the real scene and clicks through it, a 443-item automated diff against this web version, and 17
 committed screenshots. Defold's engine and settings tests pass and its screenshots were reviewed, but its
 interface has only been exercised by a single scripted click run — so if you want a native build and have no
 reason to prefer Defold, choose Godot. (Both ports' READMEs are currently in Chinese.)
@@ -76,7 +76,7 @@ actually uses:
 | Sound switch | ✅ | Move beep + time-up alarm (synthesised live, no audio files) |
 | Two-sided facing layout (both players read their own side) | ✅ | “Facing mode” (`180°`) turns the far panel’s digits around; “Swap sides” (`⇵`) moves each colour to the other half — see section 5 |
 | Keep screen awake | ✅ | Wake Lock API, the screen stays on during a game |
-| Clickable logo | ✅ | Tap the logo (setup header or toolbar) to cycle **TARUMT → CoQ → Chess → Weiqi → MWA**; the choice is remembered across restarts |
+| Clickable logo | ✅ | Tap the logo (setup header or toolbar) to cycle **TARUMT → CoQ → Chess → Weiqi → MWA**; the choice is remembered across restarts | All three versions support it (Godot/Defold use the same five bitmaps).
 | Replaceable logo / favicon | ✅ | Overwrite `assets/logo-source.png`, run `node tools/export-icons.js`, see section 7 |
 | Battery indicator | ❌ | The phone has one; no need to duplicate it |
 | Multiple time controls (e.g. 40 moves/90 min + 30 min) | ❌ | Single period only; byoyomi “periods” are a different thing. See section 8 |
@@ -401,16 +401,16 @@ ChessClock/
 ```
 
 ```bash
-npm test        # 53 tests: timing logic + page/icon/bilingual/theme/defaults/byoyomi-seed/screenshot-scene/byoyomi-bar integrity
+npm test        # 56 tests: timing logic + page/icon/bilingual/theme/defaults/byoyomi-seed/screenshot-scene/byoyomi-bar integrity
 npm start       # start the LAN server, open it on your phone
 npm run shots   # re-shoot every scene with headless Chrome (needs Chrome/Edge installed)
 ```
 
 ### CI, and the released Android APK
 
-* **`.github/workflows/ci.yml`** runs all three suites on every push / pull request: `npm test` (53), the Defold
-  `node tests/run.js` (20) and the Godot headless suite on a downloaded Godot 4.5.1 (31 engine + 21 UI cases +
-  the 431-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
+* **`.github/workflows/ci.yml`** runs all three suites on every push / pull request: `npm test` (56), the Defold
+  `node tests/run.js` (20) and the Godot headless suite on a downloaded Godot 4.5.1 (31 engine + 23 UI cases +
+  the 443-item cross-check). Same commands as above — a green CI means the same thing as a green local run.
 * **`.github/workflows/android.yml`** builds the debug APK on a runner and attaches it to the GitHub Release when
   a `v*` tag is pushed (or on demand through *Run workflow*, where it lands in the run's artifacts).
 * **Already released: [v1.0.1](https://github.com/lots/ChessClock/releases/tag/v1.0.1)** carries

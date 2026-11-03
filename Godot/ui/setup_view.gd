@@ -96,11 +96,14 @@ func build() -> void:
 	page.add_child(header)
 
 	_logo = TextureRect.new()
-	_logo.texture = load("res://assets/logo-brand.png")
+	_logo.texture = load(ClockLogos.brand_path("tarumt"))
 	_logo.custom_minimum_size = Vector2(96, 96)
 	_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_logo.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	# 点一下换下一个标志（与网页版 #btnLogoBrand 同一套：TARUMT → CoQ → Chess → 围棋 → MWA）
+	_logo.mouse_filter = Control.MOUSE_FILTER_STOP
+	_logo.gui_input.connect(_on_logo_input)
 	header.add_child(_logo)
 
 	var head_text := UiKit.vbox(4)
@@ -350,12 +353,31 @@ func refresh_language() -> void:
 	_fill_theme_options()
 	_refresh_mode()
 	_mark_language()
+	apply_logo()
 
 
 func _mark_language() -> void:
 	var lang: String = app.lang
 	_lang_en.theme_type_variation = "LangButtonOn" if lang == "en" else "LangButton"
 	_lang_zh.theme_type_variation = "LangButtonOn" if lang == "zh" else "LangButton"
+
+
+## 把当前标志（cfg.logo）应用到设置页的 logo 上，并写好提示文案（跟着语言走）
+func apply_logo() -> void:
+	var id := ClockLogos.normalize(cfg().get("logo", ClockLogos.ORDER[0]))
+	var tex: Texture2D = load(ClockLogos.brand_path(id))
+	if _logo.texture != tex:
+		_logo.texture = tex
+	_logo.tooltip_text = t("logo.button.aria", {"name": t(ClockLogos.name_key(id))})
+
+
+## 点 logo：换成下一个（到头绕回），立刻存盘并通知棋钟页同步
+func _on_logo_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		cfg()["logo"] = ClockLogos.next_id(cfg().get("logo", ClockLogos.ORDER[0]))
+		apply_logo()
+		settings_changed.emit()
+		accept_event()
 
 
 func apply_palette() -> void:

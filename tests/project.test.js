@@ -643,6 +643,23 @@ test('站点图标（favicon / iOS 主屏）都指向 logo 资源，且 PNG 已�
   });
 });
 
+test('图标按钮：一组预定义图标里循环（声音 🔊 ↔ 🔇），点一下换一张、到头绕回', () => {
+  // 图标集声明：声音按钮恰好两张，顺序是「开、关」
+  assert.ok(/var ICON_SETS = \{[\s\S]{0,120}?sound: \['🔊', '🔇'\]/.test(app),
+    'app.js 应声明 ICON_SETS.sound = [开, 关]');
+  // 循环本身：取模，到头绕回（负数也能绕）
+  assert.ok(/function cycleIcon\(el, setName\) \{[\s\S]{0,120}?iconIndexOf\(el, setName\) \+ 1/.test(app),
+    'cycleIcon 应基于当前下标 +1');
+  assert.ok(/\(\(index % set\.length\) \+ set\.length\) % set\.length/.test(app),
+    'setIcon 应做取模，循环到头绕回第一张');
+  // 点击 → 换图标 → 状态跟着图标走
+  assert.ok(/cycleIcon\(\$\('#btnSound'\), 'sound'\)/.test(app), '点声音按钮应调用 cycleIcon');
+  assert.ok(/cfg\.sound = \(idx === 0\)/.test(app), '第 0 张图标 = 开，状态由图标下标决定');
+  // 状态同步也走同一套 setIcon（读存档 / 换语言后不会与图标脱节）
+  assert.ok(/setIcon\(b, 'sound', cfg\.sound \? 0 : 1\)/.test(app), 'updateSoundButton 应通过 setIcon 同步');
+  // DOM 上带上图标集名字，静态页与测试都能据此找到它
+  assert.ok(/id="btnSound"[^>]*data-icon-set="sound"/.test(html), 'index.html 的声音按钮应带 data-icon-set="sound"');
+});
 test('最后 10 秒提示音：主时间也响，四种模式通用', () => {
   assert.ok(/var TICK_LAST_MS = 10000/.test(app), 'app.js 应有 10 秒提示音的窗口常量');
   assert.ok(/function lastTenTick/.test(app), 'app.js 应有 lastTenTick()');

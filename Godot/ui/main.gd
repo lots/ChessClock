@@ -191,6 +191,7 @@ func _build_views() -> void:
 	clock_view.facing_toggle_requested.connect(_toggle_facing)
 	clock_view.swap_toggle_requested.connect(_toggle_swap)
 	clock_view.fullscreen_requested.connect(_toggle_fullscreen)
+	clock_view.logo_toggle_requested.connect(_cycle_logo)
 
 	overlay = ResultOverlay.new()
 	overlay.name = "Overlay"
@@ -264,6 +265,8 @@ func _apply_language(next: String, save := true) -> void:
 	setup_view.refresh_language()
 	help_view.refresh_language()
 	clock_view.refresh_language()
+	clock_view.apply_logo()
+	setup_view.apply_logo()
 	_apply_window_title()
 	if save:
 		save_settings()
@@ -292,9 +295,18 @@ func _set_theme(name: String) -> void:
 
 func _on_settings_changed() -> void:
 	save_settings()
+	clock_view.apply_logo()          # 设置页点了 logo → 操作条那颗跟着换
 	if not state.is_empty():
 		clock_view.apply_facing()
 		clock_view.apply_swap()
+
+
+## 点操作条上的 logo：换下一个标志（到头绕回），存盘并让设置页那颗同步
+func _cycle_logo() -> void:
+	cfg["logo"] = ClockLogos.next_id(cfg.get("logo", ClockLogos.ORDER[0]))
+	save_settings()
+	clock_view.apply_logo()
+	setup_view.apply_logo()
 
 
 func save_settings() -> void:
@@ -401,6 +413,9 @@ func _tick() -> void:
 func _on_flag(side: String) -> void:
 	_start_alarm()
 	_release_wake()
+	# 震动：与网页版 navigator.vibrate 对齐（Godot 没有震动「模式」，只有时长）
+	if OS.has_feature("mobile"):
+		Input.vibrate_handheld(400)
 	var now := now_ms()
 	clock_view.render(state, now)
 	var moves: int = int(state["moves"]["w"]) + int(state["moves"]["b"])
@@ -500,9 +515,11 @@ func _process_alarm(now: int) -> void:
 # ------------------------------------------------------------------ 开关
 
 func _toggle_sound() -> void:
-	cfg["sound"] = not bool(cfg["sound"])
+	# 点一下：图标换到图标集里的下一张（开 → 关 → 开 …），状态由图标下标反推
+	var idx: int = clock_view.cycle_icon("sound")
+	cfg["sound"] = (idx == 0)          # 第 0 张 = 开
 	save_settings()
-	clock_view.update_sound_icon()
+	clock_view.update_sound_icon()     # 同步 tooltip 文案
 	if bool(cfg["sound"]):
 		_play("click")
 

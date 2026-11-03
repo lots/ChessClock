@@ -204,6 +204,81 @@ test('零第三方依赖：没有库依赖，按钮与命中判定都是自己�
   assert.ok(/side_label/.test(clock), '棋钟界面应仍有白方/黑方标签');
 });
 
+test('标志循环：点 logo 换成下一个（TARUMT → CoQ → Chess → 围棋 → MWA → 回绕）', () => {
+  const logos = read('logic/logos.lua');
+  const settings = read('logic/settings.lua');
+  const text = read('logic/text.lua');
+  const menu = read('menu/menu.gui_script');
+  const clock = read('clock/clock.gui_script');
+  const atlas = read('assets/logo.atlas');
+  const webApp = fs.readFileSync(path.join(WEB_ROOT, 'app.js'), 'utf8');
+
+  // 顺序与网页版一致
+  assert.ok(/M\.ORDER = \{ "tarumt", "coq", "chess", "weiqi", "mwa" \}/.test(logos),
+    '标志顺序应与网页版 LOGO_ORDER 一致');
+  ['tarumt', 'coq', 'chess', 'weiqi', 'mwa'].forEach((id) => {
+    assert.ok(new RegExp('logo\\.name\\.' + id).test(webApp), '网页版应有 logo.name.' + id + ' 词条');
+  });
+  // 五张图都进了图集（不然运行期是空白）
+  ['brand_coq', 'brand_chess', 'brand_weiqi', 'brand_mwa',
+   'strip_coq', 'strip_chess', 'strip_weiqi', 'strip_mwa'].forEach((n) => {
+    assert.ok(atlas.indexOf('/assets/logos/' + n + '.png') >= 0, 'logo.atlas 缺少 ' + n);
+  });
+  // 设置里存着 logo，非法值回落
+  assert.ok(/logo = "tarumt"/.test(settings), 'settings.lua 的默认标志应是 tarumt');
+  assert.ok(/logos\.normalize\(raw\.logo\)/.test(settings), '存档里的 logo 应经 normalize 兜底');
+  // 两块界面都能点：设置页那颗 + 操作条那颗
+  assert.ok(/#label = "logo"/.test(menu.replace(/"/g, '"')) || /id = "logo"/.test(menu),
+    '设置页的 logo 应登记成可点区域');
+  assert.ok(/id = "logo"/.test(clock), '操作条上的 logo 也应登记成可点区域');
+  assert.ok(/function cycle_logo\(self\)/.test(menu) && /function cycle_logo\(self\)/.test(clock),
+    '两块界面都应有 cycle_logo()');
+  assert.ok(/logos\.next_id\(self\.cfg\.logo\)/.test(menu), 'cycle_logo 应走 logos.next_id');
+  // 换图 = 同一张图集里换 flipbook
+  assert.ok(/gui\.play_flipbook\(self\.nodes\.logo/.test(menu), '设置页 logo 用 play_flipbook 换图');
+  assert.ok(/gui\.play_flipbook\(self\.logo/.test(clock), '操作条 logo 用 play_flipbook 换图');
+  // 文案（英文单语，但词条要齐）
+  ['logo_name_tarumt', 'logo_name_coq', 'logo_name_chess', 'logo_name_weiqi', 'logo_name_mwa']
+    .forEach((k) => assert.ok(text.indexOf(k) >= 0, 'text.lua 缺少 ' + k));
+});
+test('图标按钮：一组预定义图标里循环（声音 开/关），与网页 ICON_SETS / Godot cycle_icon 对称', () => {
+  const ui = read('logic/ui.lua');
+  const clock = read('clock/clock.gui_script');
+  // 图标按钮记住整组图标（不是只记一张），cycle_icon 按顺序换到下一张、到头绕回
+  assert.ok(/anims = anims,/.test(ui), 'make_icon_button 应把图标集存进 b.anims');
+  assert.ok(/function b\.cycle_icon\(\)/.test(ui), 'ui.lua 应提供 b.cycle_icon()');
+  assert.ok(/b\.anims\[\(i % n\) \+ 1\]/.test(ui), 'cycle_icon 应做取模，到头绕回第一张');
+  // 声音按钮的图标集恰好两张，顺序是「开、关」
+  assert.ok(/\{ ui\.ICONS\.sound_on, ui\.ICONS\.sound_off \}/.test(clock),
+    '声音按钮的图标集应是 [sound_on, sound_off]');
+  // 点击走的是「换下一张」这条路，状态由图标反推（和网页 / Godot 一致）
+  assert.ok(/local next_anim = self\.btn_sfx\.cycle_icon\(\)/.test(clock),
+    'toggle_sound 应调用 btn_sfx.cycle_icon()');
+  assert.ok(/self\.cfg\.sound = \(next_anim == ui\.ICONS\.sound_on\)/.test(clock),
+    '状态应由图标集下标反推（第一张 = 开）');
+});
+
+test('离开对局的确认层（Defold 也补上了，与网页 window.confirm / Godot 自绘卡对称）', () => {
+  const clock = read('clock/clock.gui_script');
+  // 节点与状态
+  assert.ok(/self\.cf_keep = ui\.make_button/.test(clock), '应有一颗「继续对局」按钮');
+  assert.ok(/self\.cf_leave = ui\.make_button/.test(clock), '应有一颗「离开」按钮');
+  assert.ok(/function show_confirm\(self\)/.test(clock) && /function hide_confirm\(self\)/.test(clock),
+    '应有 show_confirm / hide_confirm');
+  // 对局进行中才问：未开表 / 已结束时直接返回
+  assert.ok(/function request_back\(self\)/.test(clock), '应有 request_back()');
+  assert.ok(/if self\.state and self\.state\.started and not self\.state\.finished then\s*\n\s*show_confirm/.test(clock),
+    'request_back 应只在「进行中」时弹确认');
+  // 齿轮按钮与 ESC 都必须走 request_back，不能直接 back_to_menu
+  assert.ok(/function\(\) request_back\(self\) end/.test(clock), '齿轮按钮应走 request_back');
+  assert.ok(/action\.pressed then request_back\(self\); return true/.test(clock), 'ESC 应走 request_back');
+  // 确认层打开时挡住整屏（点击不会漏到面板上）
+  assert.ok(/if self\.confirm_on then\s*\n\s*if ui\.pick\(self\.cf_keep/.test(clock),
+    'confirm_on 时应只认确认卡上的两颗按钮');
+  // 遮罩是真半透明（以前 ui.dim 只压暗 RGB、alpha 仍是 1，等于整块不透明）
+  assert.ok(/\{ bgc\[1\], bgc\[2\], bgc\[3\], 0\.55 \}/.test(clock),
+    '结算层 / 确认层的遮罩应是 55% 透明');
+});
 test('最后 10 秒提示音：主时间也响，四种模式通用（与网页 lastTenTick 对称）', () => {
   const clock = read('clock/clock.gui_script');
   const webApp = fs.readFileSync(path.join(WEB_ROOT, 'app.js'), 'utf8');

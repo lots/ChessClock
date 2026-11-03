@@ -1,4 +1,12 @@
 images {
   image: "/assets/logo.png"
+  image: "/assets/logos/brand_coq.png"
+  image: "/assets/logos/brand_chess.png"
+  image: "/assets/logos/brand_weiqi.png"
+  image: "/assets/logos/brand_mwa.png"
+  image: "/assets/logos/strip_coq.png"
+  image: "/assets/logos/strip_chess.png"
+  image: "/assets/logos/strip_weiqi.png"
+  image: "/assets/logos/strip_mwa.png"
 }
 extrude_borders: 2

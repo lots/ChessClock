@@ -26,6 +26,7 @@ local text = require("logic.text")
 local settings = require("logic.settings")
 local E = require("logic.engine")
 local theme = require("logic.theme")
+local logos = require("logic.logos")
 
 local MODES = { "fischer", "delay", "byoyomi", "sudden" }
 
@@ -152,7 +153,7 @@ end
 
 --- 设置页正文（page == "setup"）
 local function build_setup(self)
-  self.nodes.logo = ui.texture("logo", 0, 0, 96, hash("logo"))
+  self.nodes.logo = ui.texture("logo", 0, 0, 96, hash(logos.brand_anim(self.cfg.logo)))
   self.nodes.title = ui.text("title", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 34,
     text.t("title"), ui.C.fg)
   self.nodes.subtitle = ui.text("subtitle", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 16,
@@ -218,6 +219,15 @@ local function build_setup(self)
 
   self.nodes.summary = ui.text("summary", 0, 0, ui.FONT_UI, ui.FONT_UI_SIZE, 17, "", ui.C.muted)
   self.start_button = make_button(self, "start", text.t("start"), ui.C.ok, ui.C.ok_ink, 30)
+
+  --[[ 设置页的 logo 也可点：点一下换下一个标志（与网页版 #btnLogoBrand 一致）。
+       它不是 ui.make_button（没有色块和文字），只是把同一个点击区登记进 self.buttons，
+       on_input 里那套 ui.pick 就能直接命中它。 ]]
+  self.buttons[#self.buttons + 1] = {
+    id = "logo",
+    box = self.nodes.logo,
+    on_click = function() cycle_logo(self) end,
+  }
 
   -- ---- 浮层：遮罩 + 每一档一行（最后建 = 画在最上面） ----
   self.nodes.popup_bg = ui.box("popup_bg", ui.rect(0, 0, 10, 10),
@@ -531,6 +541,21 @@ function refresh(self)
   end
 end
 
+--[[ 标志：点一下换成下一个（到头绕回），存盘并让棋钟操作条那颗同步。 ]]
+function cycle_logo(self)
+  self.cfg.logo = logos.next_id(self.cfg.logo)
+  apply_logo(self)
+  dbg("logo", self.cfg.logo)
+  save(self)
+  msg.post("#gui_clock", "logo", { logo = self.cfg.logo })
+end
+
+--- 把 cfg.logo 画到设置页的 logo 节点上（换图 = 在同一张图集里换 flipbook）
+function apply_logo(self)
+  gui.play_flipbook(self.nodes.logo, hash(logos.brand_anim(self.cfg.logo)))
+end
+
+
 function save(self)
   msg.post("#main", "save_settings", { config = settings.sanitize(self.cfg) })
 end
@@ -681,12 +706,16 @@ function init(self)
 end
 
 function on_message(self, message_id, message, sender)
-  if message_id == hash("settings") then
+  if message_id == hash("logo") then
+    self.cfg.logo = logos.normalize(message.logo)
+    apply_logo(self)
+  elseif message_id == hash("settings") then
     self.cfg = settings.sanitize(message.config)
     if use_theme(self, self.cfg.theme) then
       rebuild(self)
     else
       refresh(self)
+      apply_logo(self)
       layout(self)
     end
   elseif message_id == hash("theme") then

@@ -9,7 +9,7 @@
 # 说明：Defold 的游戏窗口是 OpenGL 窗口，用 PrintWindow 抓会黑屏，所以这里用
 #       CopyFromScreen 抓窗口所在的屏幕区域（因此窗口不能被别的窗口遮挡）。
 param(
-  [ValidateSet('menu', 'help', 'preset-open', 'clock', 'clock-byoyomi', 'clock-swapped', 'overlay')]
+  [ValidateSet('menu', 'help', 'preset-open', 'clock', 'clock-byoyomi', 'clock-swapped', 'confirm', 'overlay', 'logo-tarumt', 'logo-coq', 'logo-chess', 'logo-weiqi', 'logo-mwa')]
   [string]$Scene = 'menu',
   [ValidateSet('', 'light', 'medium', 'dark')]
   [string]$Theme = '',
@@ -121,7 +121,17 @@ if ($Scene -eq 'clock-swapped') {
   $args2 += @('--config=chessclock.autostart=1 --config=chessclock.demo_swapped=1')
   if (-not $Out) { $Out = 'tests/screenshots/clock-swapped.png' }
 }
-# clock-byoyomi：直接把表拨到读秒阶段（主时间用尽 + 跨过 1 段），拍到段数条暗掉一段的样子
+# logo-<id>：把标志换成指定那一张（验证图集里的五张标志都能显示）
+if ($Scene -like 'logo-*') {
+  $id = $Scene.Substring(5)
+  $args2 += @('--config=chessclock.demo_logo=' + $id)
+  if (-not $Out) { $Out = 'tests/screenshots/logo-' + $id + '.png' }
+}
+# confirm：进棋钟页后直接弹出「离开对局？」确认卡（demo_confirm）
+if ($Scene -eq 'confirm') {
+  $args2 += @('--config=chessclock.autostart=1', '--config=chessclock.demo_confirm=1')
+}
+# clock-byoyomi：直接把表拨到读秒阶段（主时间用尽 + 跨过 1 段），拍到段数条变红一段的样子
 if ($Scene -eq 'clock-byoyomi') {
   $args2 += @('--config=chessclock.autostart=1', '--config=chessclock.demo_byoyomi=1')
 }

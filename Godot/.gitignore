@@ -13,3 +13,6 @@ desktop.ini
 
 # 说明：export_presets.cfg 是**入库的**——它是工程配置（ABI、包名、导出过滤），
 # 里面不含密钥；签名用的 keystore 路径与密码在 Godot 的 editor_settings 里，不在这个文件里。
+# 挪走旧快照后的残留 / 导出日志（构建产物，绝不入库）
+build.bak*/
+build-export.log

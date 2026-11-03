@@ -13,3 +13,6 @@ chessclock_settings
 .DS_Store
 Thumbs.db
 desktop.ini
+# 挪走旧快照后的残留（构建产物，绝不入库）
+build.bak*/
+bundle.bak*/

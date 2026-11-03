@@ -22,7 +22,7 @@
 
 > **In English**: a Godot 4 port of the HTML5 chess/Weiqi clock in the repository root. Same timing engine,
 > same bilingual copy, same three themes. Pure-logic `logic/engine.gd` mirrors `engine.js` and is cross-checked
-> against it automatically (`tests/project_spec.js`): 31 ported engine tests, 21 headless UI tests and 431
+> against it automatically (`tests/project_spec.js`): 31 ported engine tests, 23 headless UI tests and 431
 > cross-checks pass, and every screenshot below was captured from the running game, not from the editor.
 > **This is the mobile version** — its main artifact is an Android APK to install on a phone; running it on a PC
 > is for development and testing, and it is better tested than the Defold port.
@@ -50,8 +50,8 @@
 | 验证项 | 方法 | 结果 |
 | --- | --- | --- |
 | 计时语义（加秒 / 延时 / 读秒 / 超时） | `godot --headless --script res://tests/engine_tests.gd`（与网页版一一对应的 31 个用例） | **31/31 通过，220 项断言** |
-| 界面交互链路 | `tests/ui_tests.gd`：真的把 `main.tscn` 实例化出来，开表 / 拍钟 / 暂停 / 交换 / 对坐 / 换主题 / 换语言 / 超时 / 再来一局 / 返回设置 / 怎么用页 / 预设下拉框 / 读秒段数条 / 0 时间规则 / 按钮接线 / 存档往返 | **21/21 通过，126 项断言** |
-| 与网页版的一致性 | `node tests/project_spec.js` 读 `tests/out/spec_dump.json`，与 `engine.js` / `i18n.js` / `app.js` / `styles.css` 比对 | **431 项全部通过** |
+| 界面交互链路 | `tests/ui_tests.gd`：真的把 `main.tscn` 实例化出来，开表 / 拍钟 / 暂停 / 交换 / 对坐 / 换主题 / 换语言 / 超时 / 再来一局 / 返回设置 / 怎么用页  / 预设下拉框 / 读秒段数条 / 0 时间规则 / 图标与标志循环 / 按钮接线 / 存档往返 | **23/23 通过，156 项断言** |
+| 与网页版的一致性 | `node tests/project_spec.js` 读 `tests/out/spec_dump.json`，与 `engine.js` / `i18n.js` / `app.js` / `styles.css` 比对 | **443 项全部通过** |
 | 资源引用 | 同一个脚本扫描所有 `.gd` 里的 `res://` 路径与工程文件 | 11 处引用全部存在 |
 | 界面外观 | `tools/screenshot.ps1`：每种画面跑一次真实渲染并存 PNG（上面嵌了 12 张，脚本一共能出 17 张） | 竖屏 / 横屏 / 三套主题 / 中英双语 / 交换 / 暂停 / 结算 / 确认框均已核对 |
 | 排序与旋转规则 | 截图 + `ui_tests`：交换后被旋转的必须是**视觉上第一块** | 与网页版 `.is-far` 同一套规则 |
@@ -252,6 +252,7 @@ Godot/
 ├── assets/
 │   ├── logo-brand.png         设置页图标 288×288（与网页版同一张原图）
 │   ├── logo-strip.png         操作条图标 144×144
+│   └── logos/                 另外四个标志的位图（brand_* 512 / strip_* 192，点 logo 循环用）
 │   ├── icon.png               应用图标 512×512（安卓启动器要求 ≥192）
 │   ├── icons/*.png            操作条图标：声音开/关、交换、设置、全屏（白色 + 透明底，按主题染色）
 │   └── sounds/*.wav           走子音 / 读秒滴答 / 超时警报（16-bit PCM，与 Defold 版同一套合成音）
@@ -260,7 +261,8 @@ Godot/
 │   ├── i18n.gd                ★ 双语文案表（164 条 × 2，与 i18n.js 逐字相同）
 │   ├── theme.gd               ★ 三套配色 + 由配色生成 Godot Theme 资源（对应 styles.css 的变量块）
 │   ├── settings.gd            存档读写 + 设置 ↔ 引擎配置换算
-│   └── presets.gd             19 档预设（棋类 11 / 读秒 8，与 app.js 逐档相同）
+│   ├── presets.gd             19 档预设（棋类 11 / 读秒 8，与 app.js 逐档相同）
+│   └── logos.gd               标志循环（5 个标志的位图与顺序，与 app.js 的 LOGO_ORDER 一致）
 ├── ui/
 │   ├── main.tscn              根场景（一个 Control + main.gd，其余界面在代码里搭）
 │   ├── main.gd                总控：状态、界面切换、计时循环、声音、屏幕常亮、全屏、截图模式、命令行参数
@@ -273,7 +275,7 @@ Godot/
 │   └── ui_kit.gd              建控件的小工具（对应 CSS 的那些规则）
 ├── tests/
 │   ├── engine_tests.gd        ★ 31 个计时用例（与 tests/engine.test.js 一一对应）
-│   ├── ui_tests.gd            ★ 21 个界面集成用例（无头跑真实场景）
+│   ├── ui_tests.gd            ★ 23 个界面集成用例（无头跑真实场景）
 │   ├── dump_spec.gd           把关键数据导出成 JSON，供 Node 与网页版比对
 │   ├── project_spec.js        ★ 与网页版逐个比对（常量 / 文案 / 预设 / 默认值 / 色值 / 资源）
 │   ├── run_tests.ps1          一键测试入口
@@ -322,7 +324,7 @@ powershell -ExecutionPolicy Bypass -File tests/run_tests.ps1     # 全部（推�
 # 计时引擎（31 个用例，不需要窗口）
 godot --headless --path . --script res://tests/engine_tests.gd
 
-# 界面集成（21 个用例，不需要窗口）
+# 界面集成（23 个用例，不需要窗口）
 godot --headless --path . --script res://tests/ui_tests.gd
 
 # 与网页版逐个比对（需要先跑 dump_spec.gd 生成 tests/out/spec_dump.json）
@@ -352,7 +354,7 @@ powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Only menu -Theme 
 
 | 想改什么 | 改哪里 |
 | --- | --- |
-| 计时规则（加秒/延时/读秒/超时） | `logic/engine.gd`，然后 `tests/run_tests.ps1` 必须仍然是 31/31、431/431 |
+| 计时规则（加秒/延时/读秒/超时） | `logic/engine.gd`，然后 `tests/run_tests.ps1` 必须仍然是 31/31、443/443 |
 | 新增一种计时模式 | 上面两处 + `ui/setup_view.gd` 的模式按钮列表 + `i18n.gd` 的词条 |
 | 配色 | `logic/theme.gd` 的三份调色板（与 `styles.css` 一一对应，改完跑 `project_spec.js` 会告诉你哪里对不上） |
 | 界面文案 / 加第三种语言 | `logic/i18n.gd`（加一份同 key 的表 + 加进 `LANGS`），再在 `setup_view.gd` 的语言胶囊里加一颗按钮 |
@@ -381,7 +383,6 @@ powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Only menu -Theme 
 | 安卓返回键 | 浏览器没有这个键 | `main.gd` 的 `_notification`：先收结算层 → 再回设置（对局中弹确认框）→ 最后才退出 | Android 默认一按就退，对正在下的棋是灾难；`ui_tests` 里有对应用例 |
 | 语言 / 主题的强制方式 | `?lang=zh` / `?theme=light` | `--lang=zh` / `--theme=light` | 没有地址栏 |
 | 设置存储 | `localStorage` | `user://chessclock_settings.json`（字段同名） | 平台存储不同 |
-| 可点击的标志循环 | 点 logo 在 TARUMT / CoQ / Chess / 围棋 / MWA 之间循环，选择随设置保存 | 固定显示 TARUMT（`logo-brand.png` / `logo-strip.png`），点不了 | 本版尚未移植；`i18n.gd` 的 `logo.*` 词条与 `settings.gd` 的 `logo` 字段已先对齐，移植时直接用 |
 | 字号自适应 | `getBoundingClientRect` 实测文本宽度 | `Font.get_string_size` 实测文本宽度 | 同一套公式，只是换了测量 API |
 | 界面搭建 | HTML 结构 + CSS | GDScript 建控件 + Theme 变体 | 见上面「界面为什么是代码搭」 |
 
@@ -389,6 +390,9 @@ powershell -ExecutionPolicy Bypass -File tools/screenshot.ps1 -Only menu -Theme 
 > 「2. 时间」的预设是**下拉框**（一档一行「10+3×20」（棋类是「10+5 · Rapid」），最后一档「自定义」），
 > 「怎么用」搬到**单独一页**、设置页底部留「怎么用 ›」入口。
 > `preset.custom`（自定义 / Custom）现在三端都有，因此在 `tests/project_spec.js` 里也只是普通词条。
+>
+> 还有**点 logo 循环五个标志**（TARUMT → CoQ → Chess → 围棋 → MWA，选择随设置保存）：三端现在都有，
+> Godot 用 `logic/logos.gd` + `assets/logos/` 的位图。
 >
 > 另外三端都加了**读秒段数条**（数字与步数行之间，一段一格，绿 = 还剩、红 = 已用）：Godot 是 `ui/byoyomi_bar.gd`
 > （`_draw` 纯绘制），网页是 `.byo-bar` + 每段一个 `<i>`，Defold 是每块面板 20 个 box 按布局缩放。

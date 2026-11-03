@@ -53,6 +53,8 @@ func _run() -> void:
 	_case("读秒段数条：Byoyomi 才出现，跨过一段变红，倒计时段按比例变红", _check_byoyomi_bar)
 	_case("时间可以为 0：读秒模式下主时间 / 读秒各能为 0，但不能同时为 0", _check_zero_times)
 	_case("最后 10 秒提示音：主时间与读秒都算，一声只响一次", _check_last_ten_tick)
+	_case("图标按钮：一组预定义图标里循环（声音 🔊 ↔ 🔇），点一下换一张、到头绕回", _check_icon_cycle)
+	_case("标志循环：点 logo 换成下一个（TARUMT → CoQ → Chess → 围棋 → MWA → 回绕）", _check_logo_cycle)
 
 	print("")
 	print("ui: %d 项断言通过, %d 项失败" % [_passed, _failed])
@@ -240,6 +242,75 @@ func _check_byoyomi_bar() -> void:
 	_eq(bar.fill_color, _app.palette["ok"], "剩下的段应是绿色（ok）")
 	_eq(bar.empty_color, _app.palette["danger"], "已用掉的段应是红色（danger）")
 
+
+## 标志循环：点一下换下一个，到头绕回；选择存进 cfg.logo（与网页版 LOGO_ORDER 同一套）
+func _check_logo_cycle() -> void:
+	# 五个标志、顺序与网页版一致
+	_eq(ClockLogos.ORDER.size(), 5, "标志一共 5 个")
+	_eq(ClockLogos.ORDER[0], "tarumt", "第一个是 TARUMT")
+	_eq(ClockLogos.ORDER[4], "mwa", "最后一个是 MWA")
+	# 每个标志都有两套位图（设置页 96 / 操作条 48），并且文件真的存在
+	for id in ClockLogos.ORDER:
+		_ok(ResourceLoader.exists(ClockLogos.brand_path(id)), "设置页位图存在：" + id)
+		_ok(ResourceLoader.exists(ClockLogos.strip_path(id)), "操作条位图存在：" + id)
+	# 归一化：不认识的值回落到第一个
+	_eq(ClockLogos.normalize("nope"), "tarumt", "不认识的值回落到 TARUMT")
+	_eq(ClockLogos.normalize("weiqi"), "weiqi", "认识的值原样保留")
+
+	# 点一下 → 下一个（走设置页那颗 logo 的真实输入处理）
+	_app.cfg["logo"] = "tarumt"
+	_app.setup_view.apply_logo()
+	var first: Texture2D = _app.setup_view._logo.texture
+	_eq(first.resource_path, ClockLogos.brand_path("tarumt"), "初始显示 TARUMT")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	_app.setup_view._on_logo_input(click)
+	_eq(_app.cfg["logo"], "coq", "点一下 → Coq")
+	_eq(_app.setup_view._logo.texture.resource_path, ClockLogos.brand_path("coq"),
+		"设置页 logo 换成了 Coq 的位图")
+	_eq(_app.clock_view._strip_logo.texture.resource_path, ClockLogos.strip_path("coq"),
+		"操作条那颗也跟着换（同一个设置）")
+
+	# 一路点到底再绕回第一张
+	for i in range(3):
+		_app.setup_view._on_logo_input(click)
+	_eq(_app.cfg["logo"], "mwa", "点 4 次到最后一个 MWA")
+	_app.setup_view._on_logo_input(click)
+	_eq(_app.cfg["logo"], "tarumt", "再点一次绕回 TARUMT")
+
+	# 从操作条那颗点，效果一样（两条入口共用同一个 cfg.logo）
+	_app._cycle_logo()
+	_eq(_app.cfg["logo"], "coq", "操作条 logo 也能换下一个")
+	_app.cfg["logo"] = "tarumt"
+	_app.setup_view.apply_logo()
+	_app.clock_view.apply_logo()
+
+## 图标按钮：点一下换到图标集里的下一张，到头绕回第一张（与网页版 ICON_SETS 同一套）
+func _check_icon_cycle() -> void:
+	var view: ClockView = _app.clock_view
+	var textures: Array = view.ICON_SETS["sound"]
+	_eq(textures.size(), 2, "声音按钮的图标集应有 2 张")
+
+	_app.cfg["sound"] = true
+	view.update_sound_icon()
+	_eq(view._sound_btn.icon.resource_path, "res://assets/icons/sound_on.png",
+		"声音开着时显示图标集第 0 张（sound_on）")
+
+	_app._toggle_sound()                       # 点一下
+	_eq(bool(_app.cfg["sound"]), false, "点一下 → 关")
+	_eq(view._sound_btn.icon.resource_path, "res://assets/icons/sound_off.png",
+		"点一下 → 图标换到第 1 张（sound_off）")
+
+	_app._toggle_sound()                       # 再点一下（绕回）
+	_eq(bool(_app.cfg["sound"]), true, "再点一下 → 开")
+	_eq(view._sound_btn.icon.resource_path, "res://assets/icons/sound_on.png",
+		"再点一下 → 图标绕回第 0 张")
+
+	# 取模本身：从最后一张再走一步回到第 0 张
+	view.set_icon_state("sound", 1)
+	_eq(view.cycle_icon("sound"), 0, "cycle_icon 到头绕回下标 0")
+	_eq(view._sound_btn.icon.resource_path, "res://assets/icons/sound_on.png", "绕回后图标也是第 0 张")
 
 ## 最后 10 秒的「滴」：主时间（四种模式）与读秒窗口都要响；同一秒只响一次；
 ## Fischer 加秒后再次进入最后 10 秒要能重新响（key 里带第几手）。
