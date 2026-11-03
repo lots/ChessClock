@@ -244,7 +244,7 @@ func _build_strip() -> void:
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	logo.modulate.a = 0.92
-	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 留着 MOUSE_FILTER_STOP：操作条上的 logo 要能点（换标志）
 
 	_strip_items = [logo, _pause_btn, _sound_btn, _rotate_btn, _swap_btn, _full_btn, _setup_btn]
 	_rebuild_strip_box()

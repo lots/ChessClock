@@ -257,6 +257,12 @@ func _check_logo_cycle() -> void:
 	_eq(ClockLogos.normalize("nope"), "tarumt", "不认识的值回落到 TARUMT")
 	_eq(ClockLogos.normalize("weiqi"), "weiqi", "认识的值原样保留")
 
+	# 两个入口都真的接上了鼠标事件（不是只有测试能调用）
+	_eq(_app.setup_view._logo.mouse_filter, Control.MOUSE_FILTER_STOP, "设置页 logo 接受鼠标事件")
+	_ok(_app.setup_view._logo.gui_input.get_connections().size() > 0, "设置页 logo 的 gui_input 已接线")
+	_eq(_app.clock_view._strip_logo.mouse_filter, Control.MOUSE_FILTER_STOP, "操作条 logo 接受鼠标事件")
+	_ok(_app.clock_view._strip_logo.gui_input.get_connections().size() > 0, "操作条 logo 的 gui_input 已接线")
+
 	# 点一下 → 下一个（走设置页那颗 logo 的真实输入处理）
 	_app.cfg["logo"] = "tarumt"
 	_app.setup_view.apply_logo()
